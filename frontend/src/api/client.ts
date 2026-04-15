@@ -8,7 +8,9 @@ import {
 } from '@/types';
 
 // API base URL
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.PROD 
+  ? (import.meta.env.VITE_API_URL || '') 
+  : (import.meta.env.VITE_API_URL || 'http://localhost:8000');
 
 // Create axios instance
 const apiClient: AxiosInstance = axios.create({
@@ -44,7 +46,6 @@ apiClient.interceptors.response.use(
 
 // Flights API
 export const flightsApi = {
-  // Get all flights with pagination
   getFlights: async (page: number = 1, pageSize: number = 50): Promise<FlightListResponse> => {
     const response = await apiClient.get('/flights', {
       params: { page, page_size: pageSize },
@@ -52,19 +53,16 @@ export const flightsApi = {
     return response.data;
   },
 
-  // Filter flights
   filterFlights: async (params: FlightFilterParams): Promise<FlightListResponse> => {
     const response = await apiClient.get('/flights/filter', { params });
     return response.data;
   },
 
-  // Get flight by ID
   getFlight: async (id: number) => {
     const response = await apiClient.get(`/flights/${id}`);
     return response.data;
   },
 
-  // Export flights to Excel
   exportFlights: async (params: FlightFilterParams): Promise<Blob> => {
     const response = await apiClient.get('/flights/export/excel', {
       params,
@@ -76,7 +74,6 @@ export const flightsApi = {
 
 // Airlines API
 export const airlinesApi = {
-  // Get all airlines
   getAirlines: async (skip: number = 0, limit: number = 100): Promise<Airline[]> => {
     const response = await apiClient.get('/airlines', {
       params: { skip, limit },
@@ -84,7 +81,6 @@ export const airlinesApi = {
     return response.data;
   },
 
-  // Get airline by ID
   getAirline: async (id: number): Promise<Airline> => {
     const response = await apiClient.get(`/airlines/${id}`);
     return response.data;
@@ -93,13 +89,11 @@ export const airlinesApi = {
 
 // Statistics API
 export const statsApi = {
-  // Get comprehensive statistics
   getStatistics: async (): Promise<FlightStatistics> => {
     const response = await apiClient.get('/stats');
     return response.data;
   },
 
-  // Get airline statistics
   getAirlineStats: async (limit: number = 10) => {
     const response = await apiClient.get('/stats/airlines', {
       params: { limit },
@@ -107,7 +101,6 @@ export const statsApi = {
     return response.data;
   },
 
-  // Health check
   healthCheck: async (): Promise<HealthCheck> => {
     const response = await apiClient.get('/stats/health');
     return response.data;

@@ -46,8 +46,8 @@ COPY start.sh ./
 RUN chmod +x start.sh
 
 # --- FIX: Force PORT to 8000 so Railway and Uvicorn match exactly ---
-ENV PORT=8000
-EXPOSE 8000
+ENV PORT=8080
+EXPOSE 8080
 # --------------------------------------------------------------------
 
 # Run the start script

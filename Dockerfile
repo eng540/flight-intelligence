@@ -2,9 +2,18 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-# تم التغيير هنا من npm ci إلى npm install لتجاوز مشكلة عدم تطابق ملفات القفل
 RUN npm install
 COPY frontend/ ./
+
+# --- FIX: Force create utils.ts in case .dockerignore excluded the lib folder ---
+RUN mkdir -p src/lib && \
+    echo 'import { clsx, type ClassValue } from "clsx";' > src/lib/utils.ts && \
+    echo 'import { twMerge } from "tailwind-merge";' >> src/lib/utils.ts && \
+    echo 'export function cn(...inputs: ClassValue[]) {' >> src/lib/utils.ts && \
+    echo '  return twMerge(clsx(inputs));' >> src/lib/utils.ts && \
+    echo '}' >> src/lib/utils.ts
+# --------------------------------------------------------------------------------
+
 ENV VITE_API_URL=""
 RUN npm run build
 

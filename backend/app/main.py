@@ -1,10 +1,12 @@
 """Main FastAPI application."""
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import logging
 import time
+import os
 
 from app.config import settings
 from app.database import init_db
@@ -44,17 +46,6 @@ app = FastAPI(
     title=settings.APP_NAME,
     description="""
     Flight Intelligence API - A comprehensive platform for flight tracking and analysis.
-    
-    ## Features
-    
-    * **Flight Tracking**: Real-time and historical flight data
-    * **Statistics**: Comprehensive analytics and insights
-    * **Export**: Excel export functionality
-    * **Filtering**: Advanced filtering capabilities
-    
-    ## Data Source
-    
-    Data is ingested from OpenSky Network API and stored in PostgreSQL.
     """,
     version="1.0.0",
     docs_url="/docs" if settings.DEBUG else None,
@@ -65,11 +56,7 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.DEBUG else [
-        "http://localhost:3000",
-        "http://localhost:5173",
-        # Add production frontend URL here
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -104,19 +91,35 @@ app.include_router(flights.router)
 app.include_router(stats.router)
 app.include_router(airlines.router)
 
-
-@app.get("/")
-async def root():
-    """Root endpoint."""
-    return {
-        "name": settings.APP_NAME,
-        "version": "1.0.0",
-        "status": "running",
-        "docs": "/docs" if settings.DEBUG else None
-    }
-
-
 @app.get("/health")
 async def health():
     """Simple health check endpoint."""
     return {"status": "healthy"}
+
+# Serve frontend
+frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend/dist"))
+if os.path.exists(frontend_dist):
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist, "assets")), name="assets")
+    
+    @app.get("/{catchall:path}")
+    async def serve_frontend(catchall: str):
+        # Prevent path traversal
+        file_path = os.path.abspath(os.path.join(frontend_dist, catchall))
+        if file_path.startswith(frontend_dist) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+            
+        # Otherwise serve index.html
+        index_path = os.path.join(frontend_dist, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+        return {"detail": "Frontend not found"}
+else:
+    @app.get("/")
+    async def root():
+        """Root endpoint."""
+        return {
+            "name": settings.APP_NAME,
+            "version": "1.0.0",
+            "status": "running",
+            "docs": "/docs" if settings.DEBUG else None
+        }

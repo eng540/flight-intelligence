@@ -2,7 +2,8 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm ci
+# تم التغيير هنا من npm ci إلى npm install لتجاوز مشكلة عدم تطابق ملفات القفل
+RUN npm install
 COPY frontend/ ./
 ENV VITE_API_URL=""
 RUN npm run build

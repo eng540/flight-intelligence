@@ -10,7 +10,6 @@ import time
 import os
 
 from app.config import settings
-from app.database import init_db
 from app.api import flights, stats, airlines
 
 # Configure logging
@@ -23,11 +22,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.APP_NAME}")
-    try:
-        init_db()
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
+    # تم إزالة init_db() لمنع تعليق قاعدة البيانات
     yield
     logger.info(f"Shutting down {settings.APP_NAME}")
 
@@ -63,7 +58,6 @@ app.include_router(airlines.router)
 async def health():
     return {"status": "healthy"}
 
-# --- الطريقة الآمنة لتقديم ملفات React (SPA) ---
 class SPAStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):
         try:

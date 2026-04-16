@@ -3,9 +3,7 @@ import {
   Plane, 
   Calendar, 
   TrendingUp, 
-  Activity,
-  Clock,
-  Globe
+  Activity
 } from 'lucide-react';
 import { FlightStatistics } from '@/types';
 
@@ -69,21 +67,24 @@ export function StatsCards({ stats, loading }: StatsCardsProps) {
 
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-      {cards.map((card) => (
-        <Card key={card.title} className="hover:shadow-lg transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              {card.title}
-            </CardTitle>
-            <div className={`${card.bgColor} p-2 rounded-lg`}>
-              <card.icon className={`h-4 w-4 ${card.color}`} />
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{card.value}</div>
-          </CardContent>
-        </Card>
-      ))}
+      {cards.map((card) => {
+        const Icon = card.icon;
+        return (
+          <Card key={card.title} className="hover:shadow-lg transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {card.title}
+              </CardTitle>
+              <div className={`${card.bgColor} p-2 rounded-lg`}>
+                <Icon className={`h-4 w-4 ${card.color}`} />
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{card.value}</div>
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }

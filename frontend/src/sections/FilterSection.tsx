@@ -66,11 +66,11 @@ export function FilterSection({ filters, onFilterChange }: FilterSectionProps) {
           <div className="space-y-2">
             <Label htmlFor="airline">Airline</Label>
             <Select
-              value={localFilters.airline_id?.toString() || ''}
+              value={localFilters.airline_id?.toString() || 'all'}
               onValueChange={(value) => 
                 setLocalFilters({ 
                   ...localFilters, 
-                  airline_id: value ? parseInt(value) : undefined 
+                  airline_id: value === "all" ? undefined : parseInt(value) 
                 })
               }
             >
@@ -78,7 +78,7 @@ export function FilterSection({ filters, onFilterChange }: FilterSectionProps) {
                 <SelectValue placeholder="Select airline" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All Airlines</SelectItem>
+                <SelectItem value="all">All Airlines</SelectItem>
                 {airlines.map((airline) => (
                   <SelectItem key={airline.id} value={airline.id.toString()}>
                     {airline.name || airline.icao24.toUpperCase()}

@@ -70,7 +70,7 @@ export function FilterSection({ filters, onFilterChange }: FilterSectionProps) {
               onValueChange={(value) => 
                 setLocalFilters({ 
                   ...localFilters, 
-                  airline_id: value === "all" ? undefined : parseInt(value) 
+                  airline_id: value === 'all' ? undefined : parseInt(value) 
                 })
               }
             >
@@ -78,6 +78,7 @@ export function FilterSection({ filters, onFilterChange }: FilterSectionProps) {
                 <SelectValue placeholder="Select airline" />
               </SelectTrigger>
               <SelectContent>
+                {/* تم إصلاح الخطأ هنا: استبدال القيمة الفارغة "" بـ "all" */}
                 <SelectItem value="all">All Airlines</SelectItem>
                 {airlines.map((airline) => (
                   <SelectItem key={airline.id} value={airline.id.toString()}>

@@ -3,21 +3,19 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from contextlib import asynccontextmanager
 import logging
 import time
 import os
 import mimetypes
 
-from app.config import settings
-from app.database import init_db
-from app.api import flights, stats, airlines
-
-# Ensure correct MIME types for frontend files
+# Ensure correct MIME types
 mimetypes.add_type('application/javascript', '.js')
 mimetypes.add_type('text/css', '.css')
 mimetypes.add_type('image/svg+xml', '.svg')
+
+from app.config import settings
+from app.api import flights, stats, airlines
 
 # Configure logging
 logging.basicConfig(
@@ -56,6 +54,7 @@ async def add_process_time_header(request: Request, call_next):
     response.headers["X-Process-Time"] = str(process_time)
     return response
 
+# --- API Routers ---
 app.include_router(flights.router)
 app.include_router(stats.router)
 app.include_router(airlines.router)
@@ -64,25 +63,32 @@ app.include_router(airlines.router)
 async def health():
     return {"status": "healthy"}
 
-# --- الطريقة المضمونة لتقديم ملفات React ---
+# --- تقديم ملفات React بطريقة صارمة جداً ---
 frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend/dist"))
 
 if os.path.exists(frontend_dist):
     logger.info(f"Serving frontend from: {frontend_dist}")
     
-    # تقديم مجلد assets (الذي يحتوي على JS و CSS) بشكل صريح
+    # 1. تقديم مجلد assets (JS, CSS, Images)
     assets_path = os.path.join(frontend_dist, "assets")
     if os.path.exists(assets_path):
         app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
     
-    # تقديم أي ملفات أخرى في الجذر (مثل favicon.ico)
-    @app.get("/{file_path:path}")
-    async def serve_static_files(file_path: str):
-        full_path = os.path.join(frontend_dist, file_path)
-        if os.path.isfile(full_path):
-            return FileResponse(full_path)
-        # إذا لم يكن الملف موجوداً (أو كان مساراً لـ React Router)، أرسل index.html
-        return FileResponse(os.path.join(frontend_dist, "index.html"))
+    # 2. تقديم الملفات في الجذر التي تحتوي على امتداد (مثل favicon.ico)
+    @app.get("/{file_name}.{ext}")
+    async def serve_root_files(file_name: str, ext: str):
+        file_path = os.path.join(frontend_dist, f"{file_name}.{ext}")
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # 3. أي مسار آخر (بدون امتداد) يتم توجيهه إلى index.html ليعمل React
+    @app.get("/{catchall:path}")
+    async def serve_react_app(catchall: str):
+        index_path = os.path.join(frontend_dist, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+        raise HTTPException(status_code=404, detail="index.html not found")
 else:
     logger.warning("Frontend build not found!")
     @app.get("/{catchall:path}")

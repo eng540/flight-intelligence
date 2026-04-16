@@ -8,10 +8,7 @@ import {
 } from '@/types';
 
 // API base URL
-const API_BASE_URL = import.meta.env.PROD 
-  ? (import.meta.env.VITE_API_URL || '') 
-  : (import.meta.env.VITE_API_URL || 'http://localhost:8000');
-
+const API_BASE_URL = ''; // مسار فارغ يعني أن الـ API موجود على نفس الدومين
 // Create axios instance
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,

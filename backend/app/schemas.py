@@ -114,6 +114,13 @@ class FlightFilterParams(BaseModel):
     page_size: int = Field(50, ge=1, le=500)
 
 
+class HistoricalIngestionRequest(BaseModel):
+    """Schema for requesting historical data ingestion."""
+    start_date: str = Field(..., description="Start date in YYYY-MM-DD format (e.g., 2026-02-15)")
+    end_date: str = Field(..., description="End date in YYYY-MM-DD format (e.g., 2026-04-08)")
+    region: Optional[str] = Field(None, description="Region name (e.g., middle_east, central_asia, north_africa)")
+
+
 # ============== Statistics Schemas ==============
 
 class DailyFlightStats(BaseModel):

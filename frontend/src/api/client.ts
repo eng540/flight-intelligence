@@ -9,6 +9,7 @@ import {
 
 // API base URL
 const API_BASE_URL = ''; // مسار فارغ يعني أن الـ API موجود على نفس الدومين
+
 // Create axios instance
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
@@ -65,6 +66,12 @@ export const flightsApi = {
       params,
       responseType: 'blob',
     });
+    return response.data;
+  },
+
+  // --- الدالة الجديدة التي تمت إضافتها ---
+  ingestHistorical: async (data: { start_date: string; end_date: string; region: string | null }) => {
+    const response = await apiClient.post('/flights/ingest-historical', data);
     return response.data;
   },
 };

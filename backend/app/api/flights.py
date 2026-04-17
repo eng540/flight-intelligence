@@ -1,5 +1,5 @@
 """Flight API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Optional, List
@@ -7,19 +7,27 @@ import logging
 import io
 import pandas as pd
 from datetime import datetime
+from celery import Celery
+import os
 
 from app.database import get_db
 from app.crud import FlightCRUD
 from app.schemas import (
-    FlightResponse, FlightListResponse, FlightFilterParams,
-    FlightGeoFilterParams, TrajectorySchema, CountryActivityStats,
-    HistoricalIngestionRequest
+    FlightResponse, FlightListResponse, FlightGeoFilterParams,
+    TrajectorySchema, CountryActivityStats, HistoricalIngestionRequest
 )
-from worker.tasks import ingest_historical_data_task
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/flights", tags=["flights"])
 
+# ─── تكوين Celery App صراحةً للـ Backend ───
+celery_app = Celery('flight_intelligence')
+celery_app.conf.update(
+    broker_url=os.getenv('REDIS_URL', 'redis://localhost:6379/0'),
+    result_backend=os.getenv('REDIS_URL', 'redis://localhost:6379/0'),
+    broker_connection_retry_on_startup=True,
+    broker_connection_retry=True,
+)
 
 @router.get("", response_model=FlightListResponse)
 async def get_flights(
@@ -31,15 +39,10 @@ async def get_flights(
     try:
         skip = (page - 1) * page_size
         flights, total = FlightCRUD.get_all(db, skip=skip, limit=page_size)
-
         pages = (total + page_size - 1) // page_size
 
         return FlightListResponse(
-            total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
-            data=flights
+            total=total, page=page, page_size=page_size, pages=pages, data=flights
         )
     except Exception as e:
         logger.error(f"Error fetching flights: {e}")
@@ -62,25 +65,13 @@ async def filter_flights(
     try:
         skip = (page - 1) * page_size
         flights, total = FlightCRUD.get_all(
-            db,
-            skip=skip,
-            limit=page_size,
-            airline_id=airline_id,
-            country=country,
-            date_from=date_from,
-            date_to=date_to,
-            departure_airport=departure_airport,
-            arrival_airport=arrival_airport
+            db, skip=skip, limit=page_size, airline_id=airline_id,
+            country=country, date_from=date_from, date_to=date_to,
+            departure_airport=departure_airport, arrival_airport=arrival_airport
         )
-
         pages = (total + page_size - 1) // page_size
-
         return FlightListResponse(
-            total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
-            data=flights
+            total=total, page=page, page_size=page_size, pages=pages, data=flights
         )
     except Exception as e:
         logger.error(f"Error filtering flights: {e}")
@@ -99,24 +90,15 @@ async def get_flights_by_geo(
     page_size: int = Query(50, ge=1, le=500, description="Items per page"),
     db: Session = Depends(get_db)
 ):
-    """
-    Get flights within a specific geographical area and time interval.
-    يفحص مسار الرحلة (Trajectory) لتحديد ما إذا كانت تمر عبر المنطقة المحددة.
-    """
+    """Get flights within a specific geographical area and time interval."""
     try:
         skip = (page - 1) * page_size
         flights, total = FlightCRUD.get_by_bounding_box(
             db, lamin, lomin, lamax, lomax, begin, end, skip, page_size
         )
-
         pages = (total + page_size - 1) // page_size
-
         return FlightListResponse(
-            total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
-            data=flights
+            total=total, page=page, page_size=page_size, pages=pages, data=flights
         )
     except Exception as e:
         logger.error(f"Error fetching geo-filtered flights: {e}")
@@ -124,10 +106,7 @@ async def get_flights_by_geo(
 
 
 @router.get("/{flight_id}", response_model=FlightResponse)
-async def get_flight(
-    flight_id: int,
-    db: Session = Depends(get_db)
-):
+async def get_flight(flight_id: int, db: Session = Depends(get_db)):
     """Get a specific flight by ID."""
     flight = FlightCRUD.get_by_id(db, flight_id)
     if not flight:
@@ -136,22 +115,14 @@ async def get_flight(
 
 
 @router.get("/{flight_id}/trajectory", response_model=TrajectorySchema)
-async def get_flight_trajectory(
-    flight_id: int,
-    db: Session = Depends(get_db)
-):
+async def get_flight_trajectory(flight_id: int, db: Session = Depends(get_db)):
     """Get trajectory data for a specific flight."""
     flight = FlightCRUD.get_by_id(db, flight_id)
     if not flight:
         raise HTTPException(status_code=404, detail="Flight not found")
-    
     if not flight.trajectory:
         raise HTTPException(status_code=404, detail="Trajectory not found for this flight")
-    
-    return {
-        "flight_id": flight_id,
-        "points": flight.trajectory
-    }
+    return {"flight_id": flight_id, "points": flight.trajectory}
 
 
 @router.get("/analytics/top-countries", response_model=List[CountryActivityStats])
@@ -190,15 +161,9 @@ async def export_flights_excel(
     """Export flights to Excel file."""
     try:
         flights, total = FlightCRUD.get_all(
-            db,
-            skip=0,
-            limit=limit,
-            airline_id=airline_id,
-            country=country,
-            date_from=date_from,
-            date_to=date_to,
-            departure_airport=departure_airport,
-            arrival_airport=arrival_airport
+            db, skip=0, limit=limit, airline_id=airline_id, country=country,
+            date_from=date_from, date_to=date_to,
+            departure_airport=departure_airport, arrival_airport=arrival_airport
         )
 
         if not flights:
@@ -223,7 +188,6 @@ async def export_flights_excel(
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Flights')
-
             worksheet = writer.sheets['Flights']
             for column in worksheet.columns:
                 max_length = 0
@@ -238,7 +202,6 @@ async def export_flights_excel(
                 worksheet.column_dimensions[column_letter].width = adjusted_width
 
         output.seek(0)
-
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"flights_export_{timestamp}.xlsx"
 
@@ -259,12 +222,12 @@ async def export_flights_excel(
 async def trigger_historical_ingestion(request: HistoricalIngestionRequest):
     """
     تشغيل محرك جلب البيانات التاريخية في الخلفية (Background Task).
+    يستخدم send_task بدلاً من استيراد المهمة مباشرةً لتجنب مشاكل الاتصال.
     """
     try:
-        task = ingest_historical_data_task.delay(
-            start_date=request.start_date,
-            end_date=request.end_date,
-            region_name=request.region
+        task = celery_app.send_task(
+            'worker.tasks.ingest_historical_data_task',
+            args=[request.start_date, request.end_date, request.region]
         )
 
         return {
@@ -276,4 +239,4 @@ async def trigger_historical_ingestion(request: HistoricalIngestionRequest):
         }
     except Exception as e:
         logger.error(f"Failed to trigger historical ingestion: {e}")
-        raise HTTPException(status_code=500, detail="Failed to start ingestion task")
+        raise HTTPException(status_code=500, detail=f"Failed to start ingestion task: {str(e)}")

@@ -4,6 +4,7 @@ from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
 import logging
 import sys
 import os
+from typing import Optional
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -120,48 +121,39 @@ def cleanup_old_data_task(self, days: int = 30):
 @shared_task(
     bind=True,
     max_retries=3,
-    default_retry_delay=30,
-    queue="ingestion"
+    default_retry_delay=300, # الانتظار 5 دقائق قبل إعادة المحاولة عند الحظر
+    time_limit=14400,        # السماح للمهمة بالعمل لمدة 4 ساعات (لأن البيانات التاريخية ضخمة)
+    queue="maintenance"      # نضعها في طابور الصيانة كي لا تعطل الجلب اللحظي
 )
 def ingest_historical_data_task(
     self,
-    begin_timestamp: int,
-    end_timestamp: int
+    start_date: str,
+    end_date: str,
+    region_name: Optional[str] = None
 ):
-    """Celery task to ingest historical flight data.
-    
-    Args:
-        begin_timestamp: Start time as Unix timestamp
-        end_timestamp: End time as Unix timestamp
-        
-    Returns:
-        Dictionary with ingestion statistics
-    """
+    """Celery task to ingest historical flight data in chunks (day by day)."""
     try:
-        logger.info(f"Starting historical data ingestion: {begin_timestamp} to {end_timestamp}")
+        logger.info(f"Starting historical data ingestion task: {start_date} to {end_date}")
         
         with FlightIngestionService() as service:
-            stats = service.ingest_flights_by_time_range(begin_timestamp, end_timestamp)
+            stats = service.ingest_historical_data_chunked(start_date, end_date, region_name)
             
-        logger.info(f"Historical ingestion completed: {stats}")
+        logger.info(f"Historical ingestion task completed: {stats}")
         return {
             "status": "success",
             "stats": stats,
-            "begin": begin_timestamp,
-            "end": end_timestamp
+            "start_date": start_date,
+            "end_date": end_date,
+            "region": region_name
         }
         
     except Exception as exc:
         logger.error(f"Historical ingestion task failed: {exc}", exc_info=True)
-        
         try:
             self.retry(exc=exc)
         except MaxRetriesExceededError:
-            return {
-                "status": "failed",
-                "error": str(exc),
-                "retries_exceeded": True
-            }
+            return {"status": "failed", "error": 
+str(exc), "retries_exceeded": True}
 
 
 @shared_task(queue="default")

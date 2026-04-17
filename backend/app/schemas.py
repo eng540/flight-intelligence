@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
+
 # ============== Country Schemas ==============
 
 class CountryBase(BaseModel):
@@ -10,16 +11,19 @@ class CountryBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     iso_code: Optional[str] = Field(None, max_length=3)
 
+
 class CountryCreate(CountryBase):
     """Schema for creating a country."""
     pass
 
+
 class CountryResponse(CountryBase):
     """Schema for country response."""
     model_config = ConfigDict(from_attributes=True)
-    
-    id: int  
+
+    id: int
     created_at: Optional[datetime] = None
+
 
 # ============== Airline Schemas ==============
 
@@ -29,19 +33,22 @@ class AirlineBase(BaseModel):
     name: Optional[str] = Field(None, max_length=200)
     callsign_prefix: Optional[str] = Field(None, max_length=10)
 
+
 class AirlineCreate(AirlineBase):
     """Schema for creating an airline."""
     country_id: Optional[int] = None
 
+
 class AirlineResponse(AirlineBase):
     """Schema for airline response."""
     model_config = ConfigDict(from_attributes=True)
-    
-    id: int  
-    country_id: Optional[int] = None  
-    country: Optional[CountryResponse] = None  
-    created_at: Optional[datetime] = None  
+
+    id: int
+    country_id: Optional[int] = None
+    country: Optional[CountryResponse] = None
+    created_at: Optional[datetime] = None
     flight_count: Optional[int] = 0
+
 
 # ============== Flight Schemas ==============
 
@@ -50,6 +57,7 @@ class FlightBase(BaseModel):
     icao24: str = Field(..., min_length=4, max_length=6)
     callsign: Optional[str] = Field(None, max_length=20)
     origin_country: Optional[str] = Field(None, max_length=100)
+
 
 class FlightCreate(FlightBase):
     """Schema for creating a flight."""
@@ -64,26 +72,28 @@ class FlightCreate(FlightBase):
     est_departure_time: Optional[int] = None
     est_arrival_time: Optional[int] = None
     unique_flight_id: str = Field(..., max_length=100)
-    trajectory: Optional[List[Dict[str, Any]]] = None  # <-- الحقل الجديد
+    trajectory: Optional[List[Dict[str, Any]]] = None
+
 
 class FlightResponse(FlightBase):
     """Schema for flight response."""
     model_config = ConfigDict(from_attributes=True)
-    
-    id: int  
-    airline_id: Optional[int] = None  
-    airline: Optional[AirlineResponse] = None  
-    first_seen: Optional[int] = None  
-    last_seen: Optional[int] = None  
-    est_departure_airport: Optional[str] = None  
-    est_arrival_airport: Optional[str] = None  
-    est_departure_time: Optional[int] = None  
-    est_arrival_time: Optional[int] = None  
-    ingestion_time: Optional[datetime] = None  
-    duration_seconds: Optional[int] = None  
-    duration_minutes: Optional[float] = None  
-    duration_hours: Optional[float] = None  
-    trajectory: Optional[List[Dict[str, Any]]] = None  # <-- الحقل الجديد
+
+    id: int
+    airline_id: Optional[int] = None
+    airline: Optional[AirlineResponse] = None
+    first_seen: Optional[int] = None
+    last_seen: Optional[int] = None
+    est_departure_airport: Optional[str] = None
+    est_arrival_airport: Optional[str] = None
+    est_departure_time: Optional[int] = None
+    est_arrival_time: Optional[int] = None
+    ingestion_time: Optional[datetime] = None
+    duration_seconds: Optional[int] = None
+    duration_minutes: Optional[float] = None
+    duration_hours: Optional[float] = None
+    trajectory: Optional[List[Dict[str, Any]]] = None
+
 
 class FlightListResponse(BaseModel):
     """Schema for paginated flight list response."""
@@ -92,6 +102,7 @@ class FlightListResponse(BaseModel):
     page_size: int
     pages: int
     data: List[FlightResponse]
+
 
 # ============== Filter Schemas ==============
 
@@ -106,18 +117,55 @@ class FlightFilterParams(BaseModel):
     page: int = Field(1, ge=1)
     page_size: int = Field(50, ge=1, le=500)
 
+
+class FlightGeoFilterParams(BaseModel):
+    """Schema for geographical flight filter parameters."""
+    begin: int = Field(..., description="Start time as Unix timestamp")
+    end: int = Field(..., description="End time as Unix timestamp")
+    lamin: float = Field(..., description="Minimum latitude")
+    lomin: float = Field(..., description="Minimum longitude")
+    lamax: float = Field(..., description="Maximum latitude")
+    lomax: float = Field(..., description="Maximum longitude")
+    page: int = Field(1, ge=1)
+    page_size: int = Field(50, ge=1, le=500)
+
+
 class HistoricalIngestionRequest(BaseModel):
     """Schema for requesting historical data ingestion."""
     start_date: str = Field(..., description="Start date in YYYY-MM-DD format (e.g., 2026-02-15)")
     end_date: str = Field(..., description="End date in YYYY-MM-DD format (e.g., 2026-04-08)")
     region: Optional[str] = Field(None, description="Region name (e.g., middle_east, central_asia, north_africa)")
 
-# ============== Statistics Schemas ==============
+
+# ============== Trajectory Schema ==============
+
+class TrajectoryPoint(BaseModel):
+    """Single trajectory point."""
+    time: int
+    lat: float
+    lon: float
+    alt: Optional[float] = None
+
+
+class TrajectorySchema(BaseModel):
+    """Schema for flight trajectory response."""
+    flight_id: int
+    points: List[TrajectoryPoint]
+
+
+# ============== Analytics Schemas ==============
+
+class CountryActivityStats(BaseModel):
+    """Schema for country activity statistics."""
+    country_name: str
+    flight_count: int
+
 
 class DailyFlightStats(BaseModel):
     """Schema for daily flight statistics."""
     date: str
     flight_count: int
+
 
 class AirlineActivityStats(BaseModel):
     """Schema for airline activity statistics."""
@@ -125,10 +173,6 @@ class AirlineActivityStats(BaseModel):
     airline_name: Optional[str]
     flight_count: int
 
-class CountryActivityStats(BaseModel):
-    """Schema for country activity statistics."""
-    country_name: str
-    flight_count: int
 
 class FlightStatistics(BaseModel):
     """Schema for comprehensive flight statistics."""
@@ -139,6 +183,7 @@ class FlightStatistics(BaseModel):
     flights_today: int
     flights_this_week: int
     flights_this_month: int
+
 
 # ============== Health Check Schema ==============
 

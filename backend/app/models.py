@@ -98,3 +98,23 @@ class Flight(Base):
         if duration:
             return duration / 60
         return None
+
+
+class IngestionLog(Base):
+    """سجل عمليات جلب البيانات من OpenSky Network."""
+    __tablename__ = "ingestion_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    start_time = Column(DateTime(timezone=True), nullable=False, index=True)
+    end_time = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(20), nullable=False, default="running", index=True)  # running, completed, failed
+    records_fetched = Column(Integer, default=0)
+    records_inserted = Column(Integer, default=0)
+    records_updated = Column(Integer, default=0)
+    error_message = Column(String(500), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    __table_args__ = (
+        Index('idx_ingestion_status_time', 'status', 'start_time'),
+        Index('idx_ingestion_created', 'created_at'),
+    )

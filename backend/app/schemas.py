@@ -1,6 +1,6 @@
 """Pydantic schemas for API request/response validation."""
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
@@ -58,7 +58,6 @@ class FlightBase(BaseModel):
     callsign: Optional[str] = Field(None, max_length=20)
     origin_country: Optional[str] = Field(None, max_length=100)
 
-
 class FlightCreate(FlightBase):
     """Schema for creating a flight."""
     first_seen: Optional[int] = None
@@ -72,7 +71,7 @@ class FlightCreate(FlightBase):
     est_departure_time: Optional[int] = None
     est_arrival_time: Optional[int] = None
     unique_flight_id: str = Field(..., max_length=100)
-
+    trajectory: Optional[List[Dict[str, Any]]] = None  # <-- الحقل الجديد
 
 class FlightResponse(FlightBase):
     """Schema for flight response."""
@@ -91,7 +90,7 @@ class FlightResponse(FlightBase):
     duration_seconds: Optional[int] = None
     duration_minutes: Optional[float] = None
     duration_hours: Optional[float] = None
-
+    trajectory: Optional[List[Dict[str, Any]]] = None  # <-- الحقل الجديد
 
 class FlightListResponse(BaseModel):
     """Schema for paginated flight list response."""
@@ -100,7 +99,6 @@ class FlightListResponse(BaseModel):
     page_size: int
     pages: int
     data: List[FlightResponse]
-
 
 # ============== Filter Schemas ==============
 

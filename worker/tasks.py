@@ -5,7 +5,6 @@ import sys
 import os
 from typing import Optional
 
-# ─── استيراد Celery App من celery_app.py ───
 from worker.celery_app import celery_app
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -62,32 +61,28 @@ def ingest_flights_task(self, hours: int = 2, region: Optional[str] = None):
 )
 def cleanup_old_data_task(self, days: int = 30):
     """
-    Celery task to clean up old flight data.
-    محمية: لا تحذف البيانات التاريخية (حتى 8 أبريل 2026).
+    ─── CLEANUP معطل — لا يحذف أي بيانات ───
+    
+    تم تعطيل هذه المهمة بناءً على متطلبات عدم حذف البيانات التاريخية.
+    للتفعيل مستقبلاً:
+    1. فعّل المهمة في celery_app.py beat_schedule
+    2. تأكد من أن cleanup_old_data() في ingestion_service.py يعمل
+    
+    Returns:
+        dict: حالة التعطيل
     """
-    try:
-        logger.info(f"Starting cleanup task for data older than {days} days")
-
-        with FlightIngestionService() as service:
-            deleted = service.cleanup_old_data(days)
-
-        logger.info(f"Cleanup completed: {deleted} records deleted")
-        return {
-            "status": "success",
-            "deleted": deleted,
-            "days": days
-        }
-
-    except SoftTimeLimitExceeded:
-        logger.error("Cleanup task timed out")
-        return {"status": "timeout", "error": "Task exceeded time limit"}
-
-    except Exception as exc:
-        logger.error(f"Cleanup task failed: {exc}", exc_info=True)
-        try:
-            self.retry(exc=exc)
-        except MaxRetriesExceededError:
-            return {"status": "failed", "error": str(exc), "retries_exceeded": True}
+    logger.warning(
+        "cleanup_old_data_task is DISABLED. "
+        "No data will be deleted. "
+        "To enable, activate in celery_app.py beat_schedule."
+    )
+    
+    return {
+        "status": "disabled",
+        "message": "Cleanup task is disabled. No data was deleted.",
+        "requested_days": days,
+        "deleted": 0
+    }
 
 
 @celery_app.task(

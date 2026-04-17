@@ -16,9 +16,6 @@ from app.models import IngestionLog
 
 logger = logging.getLogger(__name__)
 
-# حماية البيانات التاريخية: لا تحذف أي بيانات قبل هذا التاريخ
-HISTORICAL_DATA_CUTOFF = datetime(2026, 4, 9)  # بعد 8 أبريل
-
 
 class FlightIngestionService:
     """Service for ingesting flight data from OpenSky API."""
@@ -53,7 +50,6 @@ class FlightIngestionService:
             unique_flights = self.processor.remove_duplicates(processed_flights)
 
             # للاستيعاب اللحظي: لا نجلب المسارات لتوفير الوقت
-            # المسارات تُجلب لاحقاً عند الطلب (Lazy) أو للبيانات التاريخية فقط
             stats = self._ingest_flights(unique_flights)
             return stats
 
@@ -69,7 +65,7 @@ class FlightIngestionService:
     ) -> Dict[str, Any]:
         """
         محرك الجلب التاريخي الذكي.
-        يقوم بتقسيم الفترة إلى شرائح 2 ساعة، يتتبع الحالة عبر IngestionLog.
+        يقوم بتقسيم الفترة إلى أيام، يتتبع الحالة عبر IngestionLog.
         """
         try:
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
@@ -150,8 +146,7 @@ class FlightIngestionService:
                 processed_flights = self.processor.process_flights(flights_data)
                 unique_flights = self.processor.remove_duplicates(processed_flights)
 
-                # إثراء المسارات فقط للرحلات المفلترة جغرافياً (للتوفير في طلبات API)
-                # أو تخطي الإثراء تماماً إذا لم تكن هناك حاجة فورية
+                # إثراء المسارات بحد أقصى 50 رحلة يومياً
                 flights_with_tracks = self._enrich_with_trajectories(unique_flights, max_tracks=50)
 
                 stats = self._ingest_flights(flights_with_tracks)
@@ -185,10 +180,7 @@ class FlightIngestionService:
         flights: List[Dict[str, Any]],
         max_tracks: int = 50
     ) -> List[Dict[str, Any]]:
-        """
-        إثراء بيانات الرحلات بمسار الطيران (Trajectory).
-        محدود بعدد معين من الرحلات لتجنب الإفراط في طلبات API.
-        """
+        """إثراء بيانات الرحلات بمسار الطيران (بحد أقصى)."""
         enriched_flights = []
         track_count = 0
 
@@ -220,7 +212,7 @@ class FlightIngestionService:
         flights: List[Dict[str, Any]],
         bbox: List[float]
     ) -> List[Dict[str, Any]]:
-        """تصفية الرحلات جغرافياً بناءً على المسار أو المطارات."""
+        """تصفية الرحلات جغرافياً بناءً على المسار."""
         lamin, lomin, lamax, lomax = bbox
         filtered_flights = []
 
@@ -235,7 +227,6 @@ class FlightIngestionService:
                 if is_in_region:
                     filtered_flights.append(flight)
             else:
-                # إذا لم يكن هناك مسار، نحتفظ بالرحلة (لا نفقد بيانات)
                 filtered_flights.append(flight)
 
         logger.info(f"Geo-filtering: Kept {len(filtered_flights)} out of {len(flights)} flights.")
@@ -290,20 +281,30 @@ class FlightIngestionService:
 
     def cleanup_old_data(self, days: int = 30) -> int:
         """
-        Remove flight data older than specified days,
-        مع حماية البيانات التاريخية المطلوبة (حتى 8 أبريل 2026).
+        ─── CLEANUP معطل — لا يحذف أي بيانات ───
+        
+        تم تعطيل هذه الوظيفة بناءً على متطلبات عدم حذف البيانات التاريخية.
+        للتفعيل مستقبلاً:
+        1. ألغِ التعليق على الكود أدناه
+        2. فعّل المهمة في celery_app.py beat_schedule
+        
+        Returns:
+            int: عدد السجلات المحذوفة (دائماً 0 عند التعطيل)
         """
-        logger.info(f"Cleaning up flights older than {days} days (protected until {HISTORICAL_DATA_CUTOFF.date()})")
-
-        cutoff = int((datetime.utcnow() - timedelta(days=days)).timestamp())
-        historical_cutoff_ts = int(HISTORICAL_DATA_CUTOFF.timestamp())
-
-        # نستخدم القيمة الأصغر: لا نحذف البيانات التاريخية المطلوبة
-        effective_cutoff = min(cutoff, historical_cutoff_ts)
-
-        deleted = FlightCRUD.delete_old_flights(self.db, effective_cutoff)
-        logger.info(f"Deleted {deleted} old flight records (cutoff: {datetime.fromtimestamp(effective_cutoff)})")
-        return deleted
+        logger.warning(
+            "cleanup_old_data() is DISABLED. "
+            "No data will be deleted. "
+            "To enable, uncomment the code below and activate in celery_app.py beat_schedule."
+        )
+        
+        # ─── الكود الأصلي (معطل) ───
+        # logger.info(f"Cleaning up flights older than {days} days")
+        # cutoff = int((datetime.utcnow() - timedelta(days=days)).timestamp())
+        # deleted = FlightCRUD.delete_old_flights(self.db, cutoff)
+        # logger.info(f"Deleted {deleted} old flight records")
+        # return deleted
+        
+        return 0  # لا شيء محذوف
 
 
 def run_ingestion(hours: int = 2) -> Dict[str, int]:

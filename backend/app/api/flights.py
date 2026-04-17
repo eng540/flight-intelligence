@@ -7,8 +7,6 @@ import logging
 import io
 import pandas as pd
 from datetime import datetime
-from celery import Celery
-import os
 
 from app.database import get_db
 from app.crud import FlightCRUD
@@ -17,17 +15,12 @@ from app.schemas import (
     TrajectorySchema, CountryActivityStats, HistoricalIngestionRequest
 )
 
+# ─── استيراد Celery App للاتصال بـ Redis ───
+from worker.celery_app import celery_app
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/flights", tags=["flights"])
 
-# ─── تكوين Celery App صراحةً للـ Backend ───
-celery_app = Celery('flight_intelligence')
-celery_app.conf.update(
-    broker_url=os.getenv('REDIS_URL', 'redis://localhost:6379/0'),
-    result_backend=os.getenv('REDIS_URL', 'redis://localhost:6379/0'),
-    broker_connection_retry_on_startup=True,
-    broker_connection_retry=True,
-)
 
 @router.get("", response_model=FlightListResponse)
 async def get_flights(
@@ -40,7 +33,6 @@ async def get_flights(
         skip = (page - 1) * page_size
         flights, total = FlightCRUD.get_all(db, skip=skip, limit=page_size)
         pages = (total + page_size - 1) // page_size
-
         return FlightListResponse(
             total=total, page=page, page_size=page_size, pages=pages, data=flights
         )
@@ -222,7 +214,7 @@ async def export_flights_excel(
 async def trigger_historical_ingestion(request: HistoricalIngestionRequest):
     """
     تشغيل محرك جلب البيانات التاريخية في الخلفية (Background Task).
-    يستخدم send_task بدلاً من استيراد المهمة مباشرةً لتجنب مشاكل الاتصال.
+    يستخدم send_task عبر Celery App المُهيأ مسبقاً.
     """
     try:
         task = celery_app.send_task(

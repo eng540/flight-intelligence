@@ -30,48 +30,39 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=1000,
     
-    # ─── جدولة المهام الدورية ───
+    # ✅ إصلاح التحذير
+    broker_connection_retry_on_startup=True,
+    
+    # ✅ إزالة cleanup من الجدولة الدورية
     beat_schedule={
         "ingest-flights-every-5-minutes": {
             "task": "worker.tasks.ingest_flights_task",
-            "schedule": 300.0,  # كل 5 دقائق
-            "args": (2,),        # جلب آخر ساعتين
+            "schedule": 300.0,
+            "args": (2,),
         },
-        # ─── CLEANUP معطل — يمكن تفعيله مستقبلاً ───
-        # "cleanup-old-data-daily": {
-        #     "task": "worker.tasks.cleanup_old_data_task",
-        #     "schedule": 86400.0,  # كل 24 ساعة
-        #     "args": (30,),         # احذف الأقدم من 30 يوم
-        # },
+        # "cleanup-old-data-daily": REMOVED
     },
     
     beat_schedule_filename="/tmp/celerybeat-schedule",
     
     task_routes={
         "worker.tasks.ingest_flights_task": {"queue": "ingestion"},
-        "worker.tasks.cleanup_old_data_task": {"queue": "maintenance"},  # مسار محفوظ
+        "worker.tasks.cleanup_old_data_task": {"queue": "maintenance"},
         "worker.tasks.ingest_historical_data_task": {"queue": "maintenance"},
     },
 )
 
-
 @task_success.connect
 def handle_task_success(sender=None, result=None, **kwargs):
-    """Handle successful task completion."""
     logger.info(f"Task {sender.name} completed successfully: {result}")
-
 
 @task_failure.connect
 def handle_task_failure(sender=None, task_id=None, exception=None, **kwargs):
-    """Handle task failure."""
     logger.error(f"Task {sender.name} failed: {exception}")
-
 
 @celery_app.task(bind=True, max_retries=3)
 def health_check_task(self):
-    """Health check task."""
     return {"status": "healthy", "worker": self.request.hostname}
-
 
 if __name__ == "__main__":
     celery_app.start()

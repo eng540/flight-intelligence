@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 import logging
+from datetime import datetime
 
 from app.database import get_db
 from app.crud import FlightCRUD
@@ -15,7 +16,6 @@ router = APIRouter(prefix="/stats", tags=["statistics"])
 async def health_check(db: Session = Depends(get_db)):
     """System health check including database connectivity."""
     try:
-        # ✅ إصلاح: استخدام text() لـ SQLAlchemy 2.0
         db.execute(text('SELECT 1'))
         return {
             "status": "healthy",
@@ -40,17 +40,3 @@ async def get_stats(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error fetching statistics: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch statistics")
-
-
-@router.get("/airlines")
-async def get_airline_stats(limit: int = 10, db: Session = Depends(get_db)):
-    """Get most active airlines."""
-    try:
-        airlines = FlightCRUD.get_most_active_airlines(db, limit)
-        return {"airlines": airlines}
-    except Exception as e:
-        logger.error(f"Error fetching airline stats: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch airline statistics")
-
-
-from datetime import datetime

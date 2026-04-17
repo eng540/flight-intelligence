@@ -1,6 +1,6 @@
 """CRUD operations for the Flight Intelligence database."""
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, and_, desc, text
+from sqlalchemy import func, and_, desc
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
@@ -11,26 +11,19 @@ from app import models, schemas
 logger = logging.getLogger(__name__)
 
 
-# ============== Country CRUD ==============
-
 class CountryCRUD:
-    """CRUD operations for Country model."""
-
     @staticmethod
     def get_by_id(db: Session, country_id: int) -> Optional[models.Country]:
-        """Get country by ID."""
         return db.query(models.Country).filter(models.Country.id == country_id).first()
 
     @staticmethod
     def get_by_name(db: Session, name: str) -> Optional[models.Country]:
-        """Get country by name."""
         return db.query(models.Country).filter(
             func.lower(models.Country.name) == func.lower(name)
         ).first()
 
     @staticmethod
     def get_or_create(db: Session, name: str) -> models.Country:
-        """Get existing country or create new one."""
         country = CountryCRUD.get_by_name(db, name)
         if not country:
             country = models.Country(name=name)
@@ -45,46 +38,24 @@ class CountryCRUD:
 
     @staticmethod
     def get_all(db: Session, skip: int = 0, limit: int = 100) -> List[models.Country]:
-        """Get all countries with pagination."""
         return db.query(models.Country).offset(skip).limit(limit).all()
 
-    @staticmethod
-    def create(db: Session, country_data: schemas.CountryCreate) -> models.Country:
-        """Create a new country."""
-        country = models.Country(**country_data.model_dump())
-        db.add(country)
-        db.commit()
-        db.refresh(country)
-        return country
-
-
-# ============== Airline CRUD ==============
 
 class AirlineCRUD:
-    """CRUD operations for Airline model."""
-
     @staticmethod
     def get_by_id(db: Session, airline_id: int) -> Optional[models.Airline]:
-        """Get airline by ID."""
         return db.query(models.Airline).options(
             joinedload(models.Airline.country)
         ).filter(models.Airline.id == airline_id).first()
 
     @staticmethod
     def get_by_icao24(db: Session, icao24: str) -> Optional[models.Airline]:
-        """Get airline by ICAO24 code."""
         return db.query(models.Airline).options(
             joinedload(models.Airline.country)
         ).filter(models.Airline.icao24 == icao24.lower()).first()
 
     @staticmethod
-    def get_or_create(
-        db: Session,
-        icao24: str,
-        name: Optional[str] = None,
-        country_name: Optional[str] = None
-    ) -> models.Airline:
-        """Get existing airline or create new one."""
+    def get_or_create(db: Session, icao24: str, name: Optional[str] = None, country_name: Optional[str] = None) -> models.Airline:
         airline = AirlineCRUD.get_by_icao24(db, icao24)
         if not airline:
             country_id = None
@@ -108,14 +79,12 @@ class AirlineCRUD:
 
     @staticmethod
     def get_all(db: Session, skip: int = 0, limit: int = 100) -> List[models.Airline]:
-        """Get all airlines with pagination."""
         return db.query(models.Airline).options(
             joinedload(models.Airline.country)
         ).offset(skip).limit(limit).all()
 
     @staticmethod
     def get_most_active(db: Session, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get most active airlines by flight count."""
         results = db.query(
             models.Airline.icao24,
             models.Airline.name,
@@ -134,38 +103,22 @@ class AirlineCRUD:
             for r in results
         ]
 
-    @staticmethod
-    def create(db: Session, airline_data: schemas.AirlineCreate) -> models.Airline:
-        """Create a new airline."""
-        airline = models.Airline(**airline_data.model_dump())
-        db.add(airline)
-        db.commit()
-        db.refresh(airline)
-        return airline
-
-
-# ============== Flight CRUD ==============
 
 class FlightCRUD:
-    """CRUD operations for Flight model."""
-
     @staticmethod
     def get_by_id(db: Session, flight_id: int) -> Optional[models.Flight]:
-        """Get flight by ID."""
         return db.query(models.Flight).options(
             joinedload(models.Flight.airline)
         ).filter(models.Flight.id == flight_id).first()
 
     @staticmethod
     def get_by_unique_id(db: Session, unique_flight_id: str) -> Optional[models.Flight]:
-        """Get flight by unique identifier."""
         return db.query(models.Flight).filter(
             models.Flight.unique_flight_id == unique_flight_id
         ).first()
 
     @staticmethod
     def exists(db: Session, unique_flight_id: str) -> bool:
-        """Check if flight exists by unique identifier."""
         return db.query(models.Flight).filter(
             models.Flight.unique_flight_id == unique_flight_id
         ).first() is not None
@@ -182,7 +135,6 @@ class FlightCRUD:
         departure_airport: Optional[str] = None,
         arrival_airport: Optional[str] = None
     ) -> tuple[List[models.Flight], int]:
-        """Get all flights with filters and pagination."""
         query = db.query(models.Flight).options(
             joinedload(models.Flight.airline)
         )
@@ -223,9 +175,9 @@ class FlightCRUD:
 
         total = query.count()
         flights = query.order_by(desc(models.Flight.first_seen)).offset(skip).limit(limit).all()
-
         return flights, total
 
+    # ✅ الجديد: الاستعلام الجغرافي الزمني
     @staticmethod
     def get_by_bounding_box(
         db: Session,
@@ -239,10 +191,9 @@ class FlightCRUD:
         limit: int = 100
     ) -> tuple[List[models.Flight], int]:
         """
-        Get flights within a geographical bounding box and time range.
-        يفحص المسار (trajectory) لتحديد ما إذا كانت الرحلة تمر عبر المنطقة.
+        جلب الرحلات ضمن مربع جغرافي وفترة زمنية.
+        يفحص المسار (trajectory) للتحديد الجغرافي.
         """
-        # الاستعلام الأساسي: الرحلات ضمن النطاق الزمني التي لها مسار
         query = db.query(models.Flight).options(
             joinedload(models.Flight.airline)
         ).filter(
@@ -253,7 +204,7 @@ class FlightCRUD:
 
         flights = query.order_by(desc(models.Flight.first_seen)).all()
 
-        # فلترة جغرافية في الذاكرة (حتى يتم تركيب PostGIS مستقبلاً)
+        # فلترة جغرافية في الذاكرة (حتى تركيب PostGIS مستقبلاً)
         filtered = []
         for flight in flights:
             if flight.trajectory:
@@ -267,9 +218,9 @@ class FlightCRUD:
 
         total = len(filtered)
         paginated = filtered[skip:skip + limit]
-
         return paginated, total
 
+    # ✅ الجديد: تحليلات الدول الأكثر نشاطاً
     @staticmethod
     def get_top_countries_in_geo_time(
         db: Session,
@@ -281,7 +232,7 @@ class FlightCRUD:
         lomax: float,
         limit: int = 10
     ) -> List[Dict[str, Any]]:
-        """Get top countries by flight count within geo/time bounds."""
+        """الدول الأكثر نشاطاً ضمن نطاق جغرافي وزمني."""
         flights, _ = FlightCRUD.get_by_bounding_box(
             db, lamin, lomin, lamax, lomax, begin, end, skip=0, limit=10000
         )
@@ -303,11 +254,7 @@ class FlightCRUD:
         ]
 
     @staticmethod
-    def create_or_update(
-        db: Session,
-        flight_data: schemas.FlightCreate
-    ) -> Optional[models.Flight]:
-        """Create or update a flight (idempotent operation)."""
+    def create_or_update(db: Session, flight_data: schemas.FlightCreate) -> Optional[models.Flight]:
         existing = FlightCRUD.get_by_unique_id(db, flight_data.unique_flight_id)
 
         if existing:
@@ -330,43 +277,7 @@ class FlightCRUD:
             return None
 
     @staticmethod
-    def bulk_create(
-        db: Session,
-        flights_data: List[schemas.FlightCreate]
-    ) -> Dict[str, int]:
-        """Bulk create flights with idempotency check."""
-        created = 0
-        updated = 0
-        skipped = 0
-
-        for flight_data in flights_data:
-            try:
-                existing = FlightCRUD.get_by_unique_id(db, flight_data.unique_flight_id)
-
-                if existing:
-                    update_data = flight_data.model_dump(exclude={'unique_flight_id'})
-                    for key, value in update_data.items():
-                        setattr(existing, key, value)
-                    updated += 1
-                else:
-                    flight = models.Flight(**flight_data.model_dump())
-                    db.add(flight)
-                    created += 1
-
-                if (created + updated) % 100 == 0:
-                    db.commit()
-
-            except Exception as e:
-                logger.error(f"Error processing flight {flight_data.unique_flight_id}: {e}")
-                skipped += 1
-                continue
-
-        db.commit()
-        return {"created": created, "updated": updated, "skipped": skipped}
-
-    @staticmethod
     def get_statistics(db: Session) -> Dict[str, Any]:
-        """Get comprehensive flight statistics."""
         now = datetime.utcnow()
         today_start = int(datetime(now.year, now.month, now.day).timestamp())
         week_start = int((now - timedelta(days=7)).timestamp())
@@ -441,7 +352,6 @@ class FlightCRUD:
 
     @staticmethod
     def delete_old_flights(db: Session, cutoff_timestamp: int) -> int:
-        """Delete flights older than specified timestamp."""
         result = db.query(models.Flight).filter(
             models.Flight.last_seen < cutoff_timestamp
         ).delete(synchronize_session=False)

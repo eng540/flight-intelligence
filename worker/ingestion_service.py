@@ -34,10 +34,7 @@ class FlightIngestionService:
             self.db.close()
 
     def ingest_recent_flights(self, hours: int = 2, region: Optional[str] = None) -> Dict[str, int]:
-        """
-        جلب الرحلات الحديثة (للتشغيل الدوري كل 5 دقائق).
-        يستخدم Bounding Box إذا حُددت المنطقة.
-        """
+        """جلب الرحلات الحديثة (للتشغيل الدوري كل 5 دقائق)."""
         logger.info(f"Starting ingestion for last {hours} hours (region: {region or 'global'})")
 
         try:
@@ -48,8 +45,6 @@ class FlightIngestionService:
 
             processed_flights = self.processor.process_flights(flights_data)
             unique_flights = self.processor.remove_duplicates(processed_flights)
-
-            # للاستيعاب اللحظي: لا نجلب المسارات لتوفير الوقت
             stats = self._ingest_flights(unique_flights)
             return stats
 
@@ -61,11 +56,12 @@ class FlightIngestionService:
         self,
         start_date: str,
         end_date: str,
-        region_name: Optional[str] = None
+        region_name: Optional[str] = None,
+        task_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        محرك الجلب التاريخي الذكي.
-        يقوم بتقسيم الفترة إلى أيام، يتتبع الحالة عبر IngestionLog.
+        محرك الجلب التاريخي الذكي — Multi Mode.
+        كل (يوم, منطقة) يُعالج ككيان مستقل.
         """
         try:
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
@@ -82,7 +78,10 @@ class FlightIngestionService:
         }
         current_dt = start_dt
 
-        logger.info(f"Starting historical ingestion from {start_date} to {end_date}. Region: {region_name or 'Global'}")
+        logger.info(
+            f"Starting historical ingestion from {start_date} to {end_date}. "
+            f"Region: {region_name or 'Global'}"
+        )
 
         while current_dt < end_dt:
             target_date_str = current_dt.strftime('%Y-%m-%d')
@@ -90,14 +89,17 @@ class FlightIngestionService:
             begin_ts = int(current_dt.timestamp())
             end_ts = int(next_dt.timestamp())
 
-            # التحقق من سجل الحالة
+            # ─── Multi Mode: البحث بـ (target_date, region) ───
             log_entry = self.db.query(IngestionLog).filter(
                 IngestionLog.target_date == target_date_str,
                 IngestionLog.region == region_name
             ).first()
 
             if log_entry and log_entry.status == "completed":
-                logger.info(f"Skipping {target_date_str}: Already fully processed.")
+                logger.info(
+                    f"Skipping [{region_name or 'global'}] {target_date_str}: "
+                    f"Already fully processed."
+                )
                 current_dt = next_dt
                 continue
 
@@ -105,6 +107,9 @@ class FlightIngestionService:
                 log_entry = IngestionLog(
                     target_date=target_date_str,
                     region=region_name,
+                    start_date=start_date,
+                    end_date=end_date,
+                    task_id=task_id,
                     status="pending"
                 )
                 self.db.add(log_entry)
@@ -114,10 +119,9 @@ class FlightIngestionService:
 
             self.db.commit()
 
-            logger.info(f"Processing chunk: {target_date_str}")
+            logger.info(f"Processing [{region_name or 'global'}] chunk: {target_date_str}")
 
             try:
-                # جلب البيانات الجغرافية إذا حُددت المنطقة
                 if region_name and region_name in REGIONS:
                     bbox = REGIONS[region_name]
                     all_flights = []
@@ -145,8 +149,6 @@ class FlightIngestionService:
 
                 processed_flights = self.processor.process_flights(flights_data)
                 unique_flights = self.processor.remove_duplicates(processed_flights)
-
-                # إثراء المسارات بحد أقصى 50 رحلة يومياً
                 flights_with_tracks = self._enrich_with_trajectories(unique_flights, max_tracks=50)
 
                 stats = self._ingest_flights(flights_with_tracks)
@@ -161,7 +163,7 @@ class FlightIngestionService:
                 total_stats["updated"] += stats["updated"]
                 total_stats["skipped"] += stats["skipped"]
 
-                logger.info(f"Chunk {target_date_str} completed: {stats}")
+                logger.info(f"Chunk [{region_name or 'global'}] {target_date_str} completed: {stats}")
 
             except Exception as e:
                 logger.error(f"Error processing chunk {target_date_str}: {e}")
@@ -180,7 +182,7 @@ class FlightIngestionService:
         flights: List[Dict[str, Any]],
         max_tracks: int = 50
     ) -> List[Dict[str, Any]]:
-        """إثراء بيانات الرحلات بمسار الطيران (بحد أقصى)."""
+        """إثراء بيانات الرحلات بمسار الطيران."""
         enriched_flights = []
         track_count = 0
 
@@ -206,31 +208,6 @@ class FlightIngestionService:
 
         logger.info(f"Enriched {track_count} flights with trajectories.")
         return enriched_flights
-
-    def _filter_by_bounding_box(
-        self,
-        flights: List[Dict[str, Any]],
-        bbox: List[float]
-    ) -> List[Dict[str, Any]]:
-        """تصفية الرحلات جغرافياً بناءً على المسار."""
-        lamin, lomin, lamax, lomax = bbox
-        filtered_flights = []
-
-        for flight in flights:
-            trajectory = flight.get("trajectory")
-
-            if trajectory:
-                is_in_region = any(
-                    lamin <= point.get("lat", 0) <= lamax and lomin <= point.get("lon", 0) <= lomax
-                    for point in trajectory
-                )
-                if is_in_region:
-                    filtered_flights.append(flight)
-            else:
-                filtered_flights.append(flight)
-
-        logger.info(f"Geo-filtering: Kept {len(filtered_flights)} out of {len(flights)} flights.")
-        return filtered_flights
 
     def _ingest_flights(self, flights: List[Dict[str, Any]]) -> Dict[str, int]:
         """حفظ الرحلات في قاعدة البيانات مع معالجة التكرار."""
@@ -280,31 +257,9 @@ class FlightIngestionService:
         return {"created": created, "updated": updated, "skipped": skipped}
 
     def cleanup_old_data(self, days: int = 30) -> int:
-        """
-        ─── CLEANUP معطل — لا يحذف أي بيانات ───
-        
-        تم تعطيل هذه الوظيفة بناءً على متطلبات عدم حذف البيانات التاريخية.
-        للتفعيل مستقبلاً:
-        1. ألغِ التعليق على الكود أدناه
-        2. فعّل المهمة في celery_app.py beat_schedule
-        
-        Returns:
-            int: عدد السجلات المحذوفة (دائماً 0 عند التعطيل)
-        """
-        logger.warning(
-            "cleanup_old_data() is DISABLED. "
-            "No data will be deleted. "
-            "To enable, uncomment the code below and activate in celery_app.py beat_schedule."
-        )
-        
-        # ─── الكود الأصلي (معطل) ───
-        # logger.info(f"Cleaning up flights older than {days} days")
-        # cutoff = int((datetime.utcnow() - timedelta(days=days)).timestamp())
-        # deleted = FlightCRUD.delete_old_flights(self.db, cutoff)
-        # logger.info(f"Deleted {deleted} old flight records")
-        # return deleted
-        
-        return 0  # لا شيء محذوف
+        """معطل — لا يحذف أي بيانات."""
+        logger.warning("cleanup_old_data() is DISABLED. No data will be deleted.")
+        return 0
 
 
 def run_ingestion(hours: int = 2) -> Dict[str, int]:

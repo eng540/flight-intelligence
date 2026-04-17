@@ -8,11 +8,12 @@ from datetime import datetime, timedelta
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from worker.opensky_client import OpenSkyClient
+from worker.opensky_client import OpenSkyClient, REGIONS
 from worker.data_processor import FlightDataProcessor
 from app.database import SessionLocal
-from app.crud import FlightCRUD, AirlineCRUD, CountryCRUD
+from app.crud import FlightCRUD, AirlineCRUD
 from app.schemas import FlightCreate
+from app.models import IngestionLog  # استيراد سجل التتبع الذكي
 
 logger = logging.getLogger(__name__)
 
@@ -37,108 +38,193 @@ class FlightIngestionService:
             self.db.close()
     
     def ingest_recent_flights(self, hours: int = 2) -> Dict[str, int]:
-        """Ingest flights from recent hours.
-        
-        Args:
-            hours: Number of hours to look back
-            
-        Returns:
-            Dictionary with ingestion statistics
+        """
+        جلب الرحلات الحديثة (للتشغيل الدوري كل 5 دقائق).
         """
         logger.info(f"Starting ingestion for last {hours} hours")
         
         try:
-            # Fetch flights from OpenSky
             flights_data = self.client.get_recent_flights(hours)
-            
             if not flights_data:
-                logger.info("No flights found")
+                logger.info("No flights found in recent hours.")
                 return {"created": 0, "updated": 0, "skipped": 0}
             
-            logger.info(f"Fetched {len(flights_data)} flights from OpenSky")
-            
-            # Process and clean data
             processed_flights = self.processor.process_flights(flights_data)
-            
-            if not processed_flights:
-                logger.info("No valid flights after processing")
-                return {"created": 0, "updated": 0, "skipped": 0}
-            
-            # Remove duplicates
             unique_flights = self.processor.remove_duplicates(processed_flights)
             
-            # Ingest flights into database
-            stats = self._ingest_flights(unique_flights)
+            # إثراء البيانات بمسارات الطيران
+            flights_with_tracks = self._enrich_with_trajectories(unique_flights)
             
-            logger.info(f"Ingestion complete: {stats}")
+            stats = self._ingest_flights(flights_with_tracks)
             return stats
             
         except Exception as e:
-            logger.error(f"Error during ingestion: {e}", exc_info=True)
+            logger.error(f"Error during recent ingestion: {e}", exc_info=True)
             return {"created": 0, "updated": 0, "skipped": 0, "error": str(e)}
-    
-    def ingest_flights_by_time_range(
-        self,
-        begin: int,
-        end: int
-    ) -> Dict[str, int]:
-        """Ingest flights for a specific time range.
-        
-        Args:
-            begin: Start time as Unix timestamp
-            end: End time as Unix timestamp
-            
-        Returns:
-            Dictionary with ingestion statistics
+
+    def ingest_historical_data_chunked(self, start_date: str, end_date: str, region_name: Optional[str] = None) -> Dict[str, Any]:
         """
-        logger.info(f"Starting ingestion for time range: {begin} to {end}")
-        
+        محرك الجلب التاريخي الذكي (Smart Historical Ingestion Engine).
+        يقوم بتقسيم الفترة إلى أيام، يتتبع الحالة عبر IngestionLog، ويضمن عدم فقدان أو تكرار البيانات.
+        """
         try:
-            # Fetch flights from OpenSky
-            flights_data = self.client.get_all_flights(begin, end)
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError:
+            return {"error": "Invalid date format. Use YYYY-MM-DD."}
+
+        if start_dt >= end_dt:
+            return {"error": "start_date must be before end_date."}
+
+        total_stats = {"days_processed": 0, "created": 0, "updated": 0, "skipped": 0, "errors": 0}
+        current_dt = start_dt
+
+        logger.info(f"Starting historical ingestion from {start_date} to {end_date}. Region: {region_name or 'Global'}")
+
+        while current_dt < end_dt:
+            target_date_str = current_dt.strftime('%Y-%m-%d')
+            next_dt = current_dt + timedelta(days=1)
+            begin_ts = int(current_dt.timestamp())
+            end_ts = int(next_dt.timestamp())
             
-            if not flights_data:
-                logger.info("No flights found")
-                return {"created": 0, "updated": 0, "skipped": 0}
+            # 1. التحقق الصارم من سجل الحالة (State Log)
+            log_entry = self.db.query(IngestionLog).filter(IngestionLog.target_date == target_date_str).first()
             
-            logger.info(f"Fetched {len(flights_data)} flights from OpenSky")
+            if log_entry and log_entry.status == "completed":
+                logger.info(f"Skipping {target_date_str}: Already fully processed ({log_entry.records_fetched} records).")
+                current_dt = next_dt
+                continue
             
-            # Process and clean data
-            processed_flights = self.processor.process_flights(flights_data)
+            # إنشاء أو تحديث السجل للبدء
+            if not log_entry:
+                log_entry = IngestionLog(target_date=target_date_str, region=region_name, status="pending")
+                self.db.add(log_entry)
+            else:
+                log_entry.status = "pending"
+                log_entry.error_message = None
             
-            if not processed_flights:
-                logger.info("No valid flights after processing")
-                return {"created": 0, "updated": 0, "skipped": 0}
+            self.db.commit()
             
-            # Remove duplicates
-            unique_flights = self.processor.remove_duplicates(processed_flights)
+            logger.info(f"Processing chunk: {target_date_str}")
+
+            # 2. جلب البيانات من OpenSky
+            try:
+                flights_data = self.client.get_all_flights(begin_ts, end_ts)
+                
+                if not flights_data:
+                    logger.info(f"No flights found for {target_date_str}")
+                    log_entry.status = "completed"
+                    log_entry.completed_at = datetime.utcnow()
+                    log_entry.records_fetched = 0
+                    self.db.commit()
+                    current_dt = next_dt
+                    continue
+
+                # 3. التنظيف وإزالة التكرار
+                processed_flights = self.processor.process_flights(flights_data)
+                unique_flights = self.processor.remove_duplicates(processed_flights)
+                
+                # 4. إثراء البيانات بمسارات الطيران (مهم جداً للتصفية الجغرافية)
+                flights_with_tracks = self._enrich_with_trajectories(unique_flights)
+
+                # 5. التصفية الجغرافية (Geo-Filtering) بناءً على المسار
+                if region_name and region_name in REGIONS:
+                    bbox = REGIONS[region_name]
+                    flights_with_tracks = self._filter_by_bounding_box(flights_with_tracks, bbox)
+
+                # 6. الحفظ في قاعدة البيانات
+                stats = self._ingest_flights(flights_with_tracks)
+                
+                # 7. تحديث سجل الحالة بنجاح العملية
+                log_entry.status = "completed"
+                log_entry.completed_at = datetime.utcnow()
+                log_entry.records_fetched = stats["created"] + stats["updated"]
+                self.db.commit()
+                
+                total_stats["days_processed"] += 1
+                total_stats["created"] += stats["created"]
+                total_stats["updated"] += stats["updated"]
+                total_stats["skipped"] += stats["skipped"]
+                
+                logger.info(f"Chunk {target_date_str} completed successfully: {stats}")
+
+            except Exception as e:
+                # تسجيل الفشل بدقة ليتم استئنافه لاحقاً
+                logger.error(f"Error processing chunk {target_date_str}: {e}")
+                log_entry.status = "failed"
+                log_entry.error_message = str(e)
+                self.db.commit()
+                total_stats["errors"] += 1
+
+            # الانتقال لليوم التالي
+            current_dt = next_dt
+
+        logger.info(f"Historical ingestion finished. Total stats: {total_stats}")
+        return total_stats
+
+    def _enrich_with_trajectories(self, flights: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """إثراء بيانات الرحلات بمسار الطيران (Trajectory) من OpenSky."""
+        enriched_flights = []
+        for flight in flights:
+            icao24 = flight.get("icao24")
+            time_param = flight.get("first_seen", 0)
             
-            # Ingest flights into database
-            stats = self._ingest_flights(unique_flights)
+            if icao24:
+                track_data = self.client.get_track_by_aircraft(icao24, time_param)
+                if track_data and "path" in track_data:
+                    # OpenSky path format: [time, latitude, longitude, baro_altitude, true_track, on_ground]
+                    trajectory = [
+                        {"time": p[0], "lat": p[1], "lon": p[2], "alt": p[3]}
+                        for p in track_data["path"] if len(p) >= 4
+                    ]
+                    flight["trajectory"] = trajectory
+                else:
+                    flight["trajectory"] = None
             
-            logger.info(f"Ingestion complete: {stats}")
-            return stats
-            
-        except Exception as e:
-            logger.error(f"Error during ingestion: {e}", exc_info=True)
-            return {"created": 0, "updated": 0, "skipped": 0, "error": str(e)}
-    
-    def _ingest_flights(self, flights: List[Dict[str, Any]]) -> Dict[str, int]:
-        """Ingest processed flights into database.
-        
-        Args:
-            flights: List of processed flight data
-            
-        Returns:
-            Dictionary with ingestion statistics
+            enriched_flights.append(flight)
+        return enriched_flights
+
+    def _filter_by_bounding_box(self, flights: List[Dict[str, Any]], bbox: List[float]) -> List[Dict[str, Any]]:
         """
+        تصفية الرحلات جغرافياً.
+        يتم فحص مسار الطائرة (Trajectory)، إذا مرت الطائرة فوق المربع الجغرافي يتم الاحتفاظ بها.
+        """
+        lamin, lomin, lamax, lomax = bbox
+        filtered_flights = []
+        
+        for flight in flights:
+            trajectory = flight.get("trajectory")
+            
+            # إذا لم يكن هناك مسار، نحتفظ بالرحلة احتياطياً لكي لا نفقد بيانات (يمكن تغيير هذا المنطق لاحقاً)
+            if not trajectory:
+                filtered_flights.append(flight)
+                continue
+                
+            # فحص نقاط المسار
+            is_in_region = False
+            for point in trajectory:
+                lat = point.get("lat")
+                lon = point.get("lon")
+                if lat is not None and lon is not None:
+                    if (lamin <= lat <= lamax) and (lomin <= lon <= lomax):
+                        is_in_region = True
+                        break  # بمجرد أن نجد نقطة واحدة داخل المنطقة، نحتفظ بالرحلة
+            
+            if is_in_region:
+                filtered_flights.append(flight)
+                
+        logger.info(f"Geo-filtering: Kept {len(filtered_flights)} out of {len(flights)} flights.")
+        return filtered_flights
+
+    def _ingest_flights(self, flights: List[Dict[str, Any]]) -> Dict[str, int]:
+        """حفظ الرحلات في قاعدة البيانات مع معالجة التكرار (Idempotent Save)."""
         created = 0
         updated = 0
         skipped = 0
         
         for flight_data in flights:
             try:
-                # Create or get airline
+                # معالجة شركة الطيران
                 airline_info = self.processor.extract_airline_info(flight_data)
                 if airline_info:
                     airline = AirlineCRUD.get_or_create(
@@ -148,79 +234,51 @@ class FlightIngestionService:
                     )
                     flight_data["airline_id"] = airline.id
                 
-                # Create flight schema
                 flight_create = FlightCreate(**flight_data)
                 
-                # Check if flight exists
+                # التحقق من وجود الرحلة مسبقاً
                 existing = FlightCRUD.get_by_unique_id(
                     self.db, 
                     flight_data["unique_flight_id"]
                 )
                 
                 if existing:
-                    # Update existing flight
                     update_data = flight_create.model_dump(exclude={'unique_flight_id'})
                     for key, value in update_data.items():
                         setattr(existing, key, value)
                     updated += 1
                 else:
-                    # Create new flight
                     flight = FlightCRUD.create_or_update(self.db, flight_create)
                     if flight:
                         created += 1
                     else:
                         skipped += 1
                 
-                # Commit every 50 records
+                # الحفظ في دفعات (Batch Commit) لحماية الذاكرة
                 if (created + updated) % 50 == 0:
                     self.db.commit()
-                    logger.debug(f"Committed batch: {created} created, {updated} updated")
                     
             except Exception as e:
                 logger.error(f"Error ingesting flight {flight_data.get('unique_flight_id')}: {e}")
                 skipped += 1
                 continue
         
-        # Final commit
+        # الحفظ النهائي
         self.db.commit()
-        
         return {"created": created, "updated": updated, "skipped": skipped}
     
     def cleanup_old_data(self, days: int = 30) -> int:
-        """Remove flight data older than specified days.
-        
-        Args:
-            days: Number of days to keep
-            
-        Returns:
-            Number of records deleted
-        """
+        """Remove flight data older than specified days."""
         logger.info(f"Cleaning up flights older than {days} days")
         deleted = FlightCRUD.delete_old_flights(self.db, days)
         logger.info(f"Deleted {deleted} old flight records")
         return deleted
 
-
 def run_ingestion(hours: int = 2) -> Dict[str, int]:
-    """Run flight ingestion (entry point for scheduler).
-    
-    Args:
-        hours: Number of hours to look back
-        
-    Returns:
-        Dictionary with ingestion statistics
-    """
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
+    logging.basicConfig(level=logging.INFO)
     with FlightIngestionService() as service:
-        stats = service.ingest_recent_flights(hours)
-        return stats
-
+        return service.ingest_recent_flights(hours)
 
 if __name__ == "__main__":
-    # Run ingestion when called directly
     stats = run_ingestion(hours=2)
     print(f"Ingestion stats: {stats}")

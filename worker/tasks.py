@@ -19,10 +19,11 @@ logger = logging.getLogger(__name__)
     default_retry_delay=60,
     soft_time_limit=300,
     time_limit=600,
-    queue="ingestion"
+    queue="ingestion",
+    name="worker.tasks.ingest_flights_task"  # ✅ اسم显式 للتأكد من التسجيل
 )
 def ingest_flights_task(self, hours: int = 2, region: Optional[str] = None):
-    """Celery task to ingest flight data."""
+    """Celery task to ingest recent flight data."""
     try:
         logger.info(f"Starting flight ingestion task for last {hours} hours (region: {region or 'global'})")
 
@@ -39,10 +40,7 @@ def ingest_flights_task(self, hours: int = 2, region: Optional[str] = None):
 
     except SoftTimeLimitExceeded:
         logger.error("Flight ingestion task timed out")
-        return {
-            "status": "timeout",
-            "error": "Task exceeded time limit"
-        }
+        return {"status": "timeout", "error": "Task exceeded time limit"}
 
     except Exception as exc:
         logger.error(f"Flight ingestion task failed: {exc}", exc_info=True)
@@ -50,11 +48,7 @@ def ingest_flights_task(self, hours: int = 2, region: Optional[str] = None):
             self.retry(exc=exc)
         except MaxRetriesExceededError:
             logger.error("Max retries exceeded for flight ingestion task")
-            return {
-                "status": "failed",
-                "error": str(exc),
-                "retries_exceeded": True
-            }
+            return {"status": "failed", "error": str(exc), "retries_exceeded": True}
 
 
 @shared_task(
@@ -63,13 +57,11 @@ def ingest_flights_task(self, hours: int = 2, region: Optional[str] = None):
     default_retry_delay=300,
     soft_time_limit=600,
     time_limit=1200,
-    queue="maintenance"
+    queue="maintenance",
+    name="worker.tasks.cleanup_old_data_task"
 )
 def cleanup_old_data_task(self, days: int = 30):
-    """
-    Celery task to clean up old flight data.
-    محمية: لا تحذف البيانات التاريخية (حتى 8 أبريل 2026).
-    """
+    """Celery task to clean up old flight data (protected for historical data)."""
     try:
         logger.info(f"Starting cleanup task for data older than {days} days")
 
@@ -77,29 +69,18 @@ def cleanup_old_data_task(self, days: int = 30):
             deleted = service.cleanup_old_data(days)
 
         logger.info(f"Cleanup completed: {deleted} records deleted")
-        return {
-            "status": "success",
-            "deleted": deleted,
-            "days": days
-        }
+        return {"status": "success", "deleted": deleted, "days": days}
 
     except SoftTimeLimitExceeded:
         logger.error("Cleanup task timed out")
-        return {
-            "status": "timeout",
-            "error": "Task exceeded time limit"
-        }
+        return {"status": "timeout", "error": "Task exceeded time limit"}
 
     except Exception as exc:
         logger.error(f"Cleanup task failed: {exc}", exc_info=True)
         try:
             self.retry(exc=exc)
         except MaxRetriesExceededError:
-            return {
-                "status": "failed",
-                "error": str(exc),
-                "retries_exceeded": True
-            }
+            return {"status": "failed", "error": str(exc), "retries_exceeded": True}
 
 
 @shared_task(
@@ -107,14 +88,10 @@ def cleanup_old_data_task(self, days: int = 30):
     max_retries=3,
     default_retry_delay=300,
     time_limit=14400,
-    queue="maintenance"
+    queue="maintenance",
+    name="worker.tasks.ingest_historical_data_task"
 )
-def ingest_historical_data_task(
-    self,
-    start_date: str,
-    end_date: str,
-    region_name: Optional[str] = None
-):
+def ingest_historical_data_task(self, start_date: str, end_date: str, region_name: Optional[str] = None):
     """Celery task to ingest historical flight data day by day."""
     try:
         logger.info(f"Starting historical ingestion: {start_date} to {end_date} (region: {region_name or 'Global'})")
@@ -122,7 +99,7 @@ def ingest_historical_data_task(
         with FlightIngestionService() as service:
             stats = service.ingest_historical_data_chunked(start_date, end_date, region_name)
 
-        logger.info(f"Historical ingestion completed: {stats}")
+        logger.info(f"Historical ingestion task completed: {stats}")
         return {
             "status": "success",
             "stats": stats,
@@ -136,14 +113,10 @@ def ingest_historical_data_task(
         try:
             self.retry(exc=exc)
         except MaxRetriesExceededError:
-            return {
-                "status": "failed",
-                "error": str(exc),
-                "retries_exceeded": True
-            }
+            return {"status": "failed", "error": str(exc), "retries_exceeded": True}
 
 
-@shared_task(queue="default")
+@shared_task(queue="default", name="worker.tasks.ping_task")
 def ping_task():
     """Simple ping task for health checks."""
     import time

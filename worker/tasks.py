@@ -1,10 +1,12 @@
 """Celery tasks for flight data ingestion."""
-from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
 import logging
 import sys
 import os
 from typing import Optional
+
+# ─── استيراد Celery App من celery_app.py ───
+from worker.celery_app import celery_app
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -13,14 +15,13 @@ from worker.ingestion_service import FlightIngestionService
 logger = logging.getLogger(__name__)
 
 
-@shared_task(
+@celery_app.task(
     bind=True,
     max_retries=3,
     default_retry_delay=60,
     soft_time_limit=300,
     time_limit=600,
-    queue="ingestion",
-    name="worker.tasks.ingest_flights_task"  # ✅ اسم显式 للتأكد من التسجيل
+    queue="ingestion"
 )
 def ingest_flights_task(self, hours: int = 2, region: Optional[str] = None):
     """Celery task to ingest recent flight data."""
@@ -51,17 +52,19 @@ def ingest_flights_task(self, hours: int = 2, region: Optional[str] = None):
             return {"status": "failed", "error": str(exc), "retries_exceeded": True}
 
 
-@shared_task(
+@celery_app.task(
     bind=True,
     max_retries=2,
     default_retry_delay=300,
     soft_time_limit=600,
     time_limit=1200,
-    queue="maintenance",
-    name="worker.tasks.cleanup_old_data_task"
+    queue="maintenance"
 )
 def cleanup_old_data_task(self, days: int = 30):
-    """Celery task to clean up old flight data (protected for historical data)."""
+    """
+    Celery task to clean up old flight data.
+    محمية: لا تحذف البيانات التاريخية (حتى 8 أبريل 2026).
+    """
     try:
         logger.info(f"Starting cleanup task for data older than {days} days")
 
@@ -69,7 +72,11 @@ def cleanup_old_data_task(self, days: int = 30):
             deleted = service.cleanup_old_data(days)
 
         logger.info(f"Cleanup completed: {deleted} records deleted")
-        return {"status": "success", "deleted": deleted, "days": days}
+        return {
+            "status": "success",
+            "deleted": deleted,
+            "days": days
+        }
 
     except SoftTimeLimitExceeded:
         logger.error("Cleanup task timed out")
@@ -83,13 +90,12 @@ def cleanup_old_data_task(self, days: int = 30):
             return {"status": "failed", "error": str(exc), "retries_exceeded": True}
 
 
-@shared_task(
+@celery_app.task(
     bind=True,
     max_retries=3,
     default_retry_delay=300,
     time_limit=14400,
-    queue="maintenance",
-    name="worker.tasks.ingest_historical_data_task"
+    queue="maintenance"
 )
 def ingest_historical_data_task(self, start_date: str, end_date: str, region_name: Optional[str] = None):
     """Celery task to ingest historical flight data day by day."""
@@ -116,7 +122,7 @@ def ingest_historical_data_task(self, start_date: str, end_date: str, region_nam
             return {"status": "failed", "error": str(exc), "retries_exceeded": True}
 
 
-@shared_task(queue="default", name="worker.tasks.ping_task")
+@celery_app.task(queue="default")
 def ping_task():
     """Simple ping task for health checks."""
     import time

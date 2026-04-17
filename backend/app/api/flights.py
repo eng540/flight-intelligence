@@ -11,6 +11,8 @@ from datetime import datetime
 from app.database import get_db
 from app.crud import FlightCRUD
 from app.schemas import FlightResponse, FlightListResponse, FlightFilterParams
+from worker.tasks import ingest_historical_data_task
+from app.schemas import HistoricalIngestionRequest
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/flights", tags=["flights"])
@@ -199,3 +201,31 @@ async def export_flights_excel(
     except Exception as e:
         logger.error(f"Error exporting flights: {e}")
         raise HTTPException(status_code=500, detail="Error generating export file")
+
+
+@router.post("/ingest-historical", status_code=202)
+async def trigger_historical_ingestion(request: HistoricalIngestionRequest):
+    """
+    تشغيل محرك جلب البيانات التاريخية في الخلفية (Background Task).
+    
+    هذا الرابط يستقبل تاريخ البداية والنهاية والمنطقة، ويرسلها إلى Celery ليعالجها
+    يوم بيوم دون إيقاف استجابة الخادم.
+    """
+    try:
+        # إرسال المهمة إلى Celery لتعمل في الخلفية (Asynchronously)
+        task = ingest_historical_data_task.delay(
+            start_date=request.start_date,
+            end_date=request.end_date,
+            region_name=request.region
+        )
+        
+        return {
+            "message": "Historical data ingestion started successfully in the background.",
+            "task_id": task.id,
+            "start_date": request.start_date,
+            "end_date": request.end_date,
+            "region": request.region or "Global"
+        }
+    except Exception as e:
+        logger.error(f"Failed to trigger historical ingestion: {e}")
+        raise HTTPException(status_code=500, detail="Failed to start ingestion task")

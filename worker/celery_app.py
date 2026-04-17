@@ -1,129 +1,69 @@
-"""Celery tasks for flight data ingestion."""
-from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
-import logging
-import sys
+"""Celery application configuration."""
+from celery import Celery
+from celery.signals import task_failure, task_success
 import os
-from typing import Optional
-
-# ─── استيراد Celery App من celery_app.py ───
-from worker.celery_app import celery_app
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-from worker.ingestion_service import FlightIngestionService
+import logging
 
 logger = logging.getLogger(__name__)
 
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-@celery_app.task(
-    bind=True,
-    max_retries=3,
-    default_retry_delay=60,
-    soft_time_limit=300,
-    time_limit=600,
-    queue="ingestion"
+celery_app = Celery(
+    "flight_intelligence",
+    broker=REDIS_URL,
+    backend=REDIS_URL,
+    include=["worker.tasks"]
 )
-def ingest_flights_task(self, hours: int = 2, region: Optional[str] = None):
-    """Celery task to ingest recent flight data."""
-    try:
-        logger.info(f"Starting flight ingestion task for last {hours} hours (region: {region or 'global'})")
 
-        with FlightIngestionService() as service:
-            stats = service.ingest_recent_flights(hours, region=region)
-
-        logger.info(f"Flight ingestion completed: {stats}")
-        return {
-            "status": "success",
-            "stats": stats,
-            "hours": hours,
-            "region": region
-        }
-
-    except SoftTimeLimitExceeded:
-        logger.error("Flight ingestion task timed out")
-        return {"status": "timeout", "error": "Task exceeded time limit"}
-
-    except Exception as exc:
-        logger.error(f"Flight ingestion task failed: {exc}", exc_info=True)
-        try:
-            self.retry(exc=exc)
-        except MaxRetriesExceededError:
-            logger.error("Max retries exceeded for flight ingestion task")
-            return {"status": "failed", "error": str(exc), "retries_exceeded": True}
-
-
-@celery_app.task(
-    bind=True,
-    max_retries=2,
-    default_retry_delay=300,
-    soft_time_limit=600,
-    time_limit=1200,
-    queue="maintenance"
+celery_app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+    task_always_eager=False,
+    task_store_eager_result=False,
+    task_ignore_result=False,
+    task_track_started=True,
+    result_expires=3600,
+    result_backend=REDIS_URL,
+    worker_prefetch_multiplier=1,
+    worker_max_tasks_per_child=1000,
+    
+    # ─── إزالة cleanup من الجدولة الدورية لحماية البيانات التاريخية ───
+    beat_schedule={
+        "ingest-flights-every-5-minutes": {
+            "task": "worker.tasks.ingest_flights_task",
+            "schedule": 300.0,
+            "args": (2,),
+        },
+        # "cleanup-old-data-daily": REMOVED — يُشغل يدوياً فقط
+    },
+    
+    beat_schedule_filename="/tmp/celerybeat-schedule",
+    
+    task_routes={
+        "worker.tasks.ingest_flights_task": {"queue": "ingestion"},
+        "worker.tasks.cleanup_old_data_task": {"queue": "maintenance"},
+        "worker.tasks.ingest_historical_data_task": {"queue": "maintenance"},
+    },
 )
-def cleanup_old_data_task(self, days: int = 30):
-    """
-    Celery task to clean up old flight data.
-    محمية: لا تحذف البيانات التاريخية (حتى 8 أبريل 2026).
-    """
-    try:
-        logger.info(f"Starting cleanup task for data older than {days} days")
-
-        with FlightIngestionService() as service:
-            deleted = service.cleanup_old_data(days)
-
-        logger.info(f"Cleanup completed: {deleted} records deleted")
-        return {
-            "status": "success",
-            "deleted": deleted,
-            "days": days
-        }
-
-    except SoftTimeLimitExceeded:
-        logger.error("Cleanup task timed out")
-        return {"status": "timeout", "error": "Task exceeded time limit"}
-
-    except Exception as exc:
-        logger.error(f"Cleanup task failed: {exc}", exc_info=True)
-        try:
-            self.retry(exc=exc)
-        except MaxRetriesExceededError:
-            return {"status": "failed", "error": str(exc), "retries_exceeded": True}
 
 
-@celery_app.task(
-    bind=True,
-    max_retries=3,
-    default_retry_delay=300,
-    time_limit=14400,
-    queue="maintenance"
-)
-def ingest_historical_data_task(self, start_date: str, end_date: str, region_name: Optional[str] = None):
-    """Celery task to ingest historical flight data day by day."""
-    try:
-        logger.info(f"Starting historical ingestion: {start_date} to {end_date} (region: {region_name or 'Global'})")
-
-        with FlightIngestionService() as service:
-            stats = service.ingest_historical_data_chunked(start_date, end_date, region_name)
-
-        logger.info(f"Historical ingestion task completed: {stats}")
-        return {
-            "status": "success",
-            "stats": stats,
-            "start_date": start_date,
-            "end_date": end_date,
-            "region": region_name
-        }
-
-    except Exception as exc:
-        logger.error(f"Historical ingestion task failed: {exc}", exc_info=True)
-        try:
-            self.retry(exc=exc)
-        except MaxRetriesExceededError:
-            return {"status": "failed", "error": str(exc), "retries_exceeded": True}
+@task_success.connect
+def handle_task_success(sender=None, result=None, **kwargs):
+    logger.info(f"Task {sender.name} completed successfully: {result}")
 
 
-@celery_app.task(queue="default")
-def ping_task():
-    """Simple ping task for health checks."""
-    import time
-    return {"status": "pong", "timestamp": time.time()}
+@task_failure.connect
+def handle_task_failure(sender=None, task_id=None, exception=None, **kwargs):
+    logger.error(f"Task {sender.name} failed: {exception}")
+
+
+@celery_app.task(bind=True, max_retries=3)
+def health_check_task(self):
+    return {"status": "healthy", "worker": self.request.hostname}
+
+
+if __name__ == "__main__":
+    celery_app.start()

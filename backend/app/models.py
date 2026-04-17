@@ -1,5 +1,8 @@
 """SQLAlchemy models for the Flight Intelligence database."""
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Index, BigInteger
+from sqlalchemy import (
+    Column, Integer, String, Float, DateTime, ForeignKey, 
+    Boolean, Index, BigInteger, UniqueConstraint
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -83,25 +86,31 @@ class Flight(Base):
 
 
 class IngestionLog(Base):
+    """
+    سجل تتبع الاستيعاب — Multi Mode
+    يتوافق مع Migration 003 + 004
+    المفتاح الفريد المركب: (target_date, region)
+    """
     __tablename__ = "ingestion_logs"
+
+    # ─── من Migration 003 ───
     id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(String(100), nullable=True, index=True)
-    start_date = Column(String(20), nullable=False)
-    end_date = Column(String(20), nullable=False)
-    target_date = Column(String(20), nullable=True)  # ✅ الجديد: لتتبع اليوم الفردي
-    region = Column(String(100), nullable=True)
+    target_date = Column(String(10), nullable=False, index=True)
+    region = Column(String(50), nullable=True)
     status = Column(String(20), nullable=False, default="pending", index=True)
-    total_flights = Column(Integer, default=0)
-    processed_days = Column(Integer, default=0)
-    error_message = Column(String(500), nullable=True)
+    records_fetched = Column(Integer, nullable=True)
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    error_message = Column(String(500), nullable=True)
 
+    # ─── من Migration 004 ───
+    task_id = Column(String(100), nullable=True, index=True)
+    start_date = Column(String(20), nullable=True)
+    end_date = Column(String(20), nullable=True)
+
+    # ─── القيد الفريد المركب للـ Multi Mode ───
     __table_args__ = (
-        Index('idx_ingestion_status', 'status'),
-        Index('idx_ingestion_date_range', 'start_date', 'end_date'),
-        Index('idx_ingestion_target_date', 'target_date'),  # ✅ فهرس جديد
-        Index('idx_ingestion_created', 'created_at'),
+        UniqueConstraint('target_date', 'region', name='uq_ingestion_target_region'),
+        Index('ix_ingestion_logs_target_date', 'target_date'),
+        Index('ix_ingestion_logs_task_id', 'task_id'),
     )

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, Suspense, lazy } from 'react';
 import { Toaster } from '@/components/ui/sonner';
 import { Header } from '@/sections/Header';
 import { StatsCards } from '@/sections/StatsCards';
@@ -7,8 +7,13 @@ import { FlightsTable } from '@/sections/FlightsTable';
 import { FilterSection } from '@/sections/FilterSection';
 import { useStatistics } from '@/hooks/useStatistics';
 import { useFilteredFlights } from '@/hooks/useFlights';
+import { useMapData } from '@/hooks/useMapData'; // 🚀 NEW
 import { FlightFilterParams } from '@/types';
+import { Loader2 } from 'lucide-react';
 import './App.css';
+
+// 🚀 التحميل الكسول لمكون الخريطة (Lazy Loading) كما طلب التقرير الهندسي
+const MapDisplay = lazy(() => import('@/components/MapDisplay'));
 
 function App() {
   // Filters state
@@ -32,10 +37,18 @@ function App() {
     refetch: refetchFlights 
   } = useFilteredFlights(filters);
 
+  // 🚀 NEW: جلب بيانات الرادار الحي
+  const { 
+    activeFlights, 
+    loading: mapLoading, 
+    refetch: refetchMap 
+  } = useMapData();
+
   // Handle refresh
   const handleRefresh = () => {
     refetchStats();
     refetchFlights();
+    refetchMap();
   };
 
   // Handle filter change
@@ -57,12 +70,22 @@ function App() {
     <div className="min-h-screen bg-background">
       <Toaster position="top-right" richColors />
       
-      <Header onRefresh={handleRefresh} loading={statsLoading || flightsLoading} />
+      <Header onRefresh={handleRefresh} loading={statsLoading || flightsLoading || mapLoading} />
       
       <main className="container mx-auto px-4 py-6 space-y-6">
         {/* Statistics Cards */}
         <StatsCards stats={stats} loading={statsLoading} />
         
+        {/* 🚀 NEW: الخريطة التفاعلية */}
+        <Suspense fallback={
+          <div className="h-[500px] w-full flex items-center justify-center border rounded-xl bg-muted/20">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <span className="ml-2 text-muted-foreground">Loading Interactive Map...</span>
+          </div>
+        }>
+          <MapDisplay activeFlights={activeFlights} loading={mapLoading} />
+        </Suspense>
+
         {/* Charts */}
         <ChartsSection stats={stats} loading={statsLoading} />
         

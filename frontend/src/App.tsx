@@ -43,7 +43,11 @@ function App() {
     <div className="min-h-screen bg-background">
       <Toaster position="top-right" richColors />
       
-      <Header onRefresh={handleRefresh} loading={statsLoading || flightsLoading || mapLoading} />
+      {/* ✅ تم التعديل هنا: حذف mapLoading */}
+      <Header 
+        onRefresh={handleRefresh} 
+        loading={statsLoading || flightsLoading} 
+      />
       
       <main className="container mx-auto px-4 py-6 space-y-6">
         <StatsCards stats={stats} loading={statsLoading} />

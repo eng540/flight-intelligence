@@ -9,6 +9,7 @@ import {
 
 // API base URL
 const API_BASE_URL = ''; // مسار فارغ يعني أن الـ API موجود على نفس الدومين
+
 // Create axios instance
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
@@ -67,6 +68,18 @@ export const flightsApi = {
     });
     return response.data;
   },
+
+  // 🚀 NEW: جلب الطائرات المحلقة حالياً للخريطة
+  getActiveMapFlights: async (): Promise<any[]> => {
+    const response = await apiClient.get('/flights/active/map');
+    return response.data;
+  },
+
+  // 🚀 NEW: جلب مسار طائرة معينة عند النقر عليها
+  getFlightTrajectory: async (id: number): Promise<any[]> => {
+    const response = await apiClient.get(`/flights/${id}/trajectory`);
+    return response.data;
+  },
 };
 
 // Airlines API
@@ -100,6 +113,12 @@ export const statsApi = {
 
   healthCheck: async (): Promise<HealthCheck> => {
     const response = await apiClient.get('/stats/health');
+    return response.data;
+  },
+
+  // 🚀 NEW: جلب أكثر الدول نشاطاً
+  getTopCountries: async (params?: { begin?: number; end?: number; limit?: number }) => {
+    const response = await apiClient.get('/stats/top-countries', { params });
     return response.data;
   },
 };

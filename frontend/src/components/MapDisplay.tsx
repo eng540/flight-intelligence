@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Map as MapIcon, Loader2 } from 'lucide-react';
@@ -6,7 +6,7 @@ import { flightsApi } from '@/api/client';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
-// إصلاح مشكلة أيقونات Leaflet الافتراضية في React
+// Fix for default marker icons in React-Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -24,10 +24,9 @@ export default function MapDisplay({ activeFlights, loading }: MapDisplayProps) 
   const [trajectory, setTrajectory] = useState<any[]>([]);
   const [loadingTraj, setLoadingTraj] = useState(false);
 
-  // مركز الخريطة الافتراضي (الشرق الأوسط)
+  // Default center (Middle East)
   const defaultCenter: [number, number] = [25.0, 45.0];
 
-  // جلب المسار عند النقر على طائرة
   const handleMarkerClick = async (flightId: number) => {
     setSelectedFlightId(flightId);
     setLoadingTraj(true);
@@ -42,7 +41,6 @@ export default function MapDisplay({ activeFlights, loading }: MapDisplayProps) 
     }
   };
 
-  // تحويل بيانات المسار إلى صيغة يفهمها Leaflet (مصفوفة من [lat, lon])
   const polylinePositions = trajectory
     .filter(p => p.lat != null && p.lon != null)
     .map(p => [p.lat, p.lon] as [number, number]);
@@ -61,20 +59,19 @@ export default function MapDisplay({ activeFlights, loading }: MapDisplayProps) 
           </div>
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-0 overflow-hidden rounded-b-xl">
+      <CardContent className="p-0 overflow-hidden rounded-b-xl border-t">
         <div className="h-[500px] w-full relative z-0">
           <MapContainer 
             center={defaultCenter} 
             zoom={4} 
             scrollWheelZoom={true} 
-            style={{ height: '100%', width: '100%' }}
+            style={{ height: '100%', width: '100%', zIndex: 0 }}
           >
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             
-            {/* رسم الطائرات المحلقة */}
             {activeFlights.map((flight) => (
               flight.lat && flight.lon ? (
                 <Marker 
@@ -86,7 +83,7 @@ export default function MapDisplay({ activeFlights, loading }: MapDisplayProps) 
                 >
                   <Popup>
                     <div className="font-semibold">{flight.callsign}</div>
-                    <div className="text-xs text-gray-500">ICAO: {flight.icao24.toUpperCase()}</div>
+                    <div className="text-xs text-gray-500">ICAO: {flight.icao24?.toUpperCase()}</div>
                     <div className="text-xs">Alt: {flight.alt ? `${Math.round(flight.alt)}m` : 'N/A'}</div>
                     {loadingTraj && selectedFlightId === flight.id && (
                       <div className="text-xs text-blue-500 mt-1 flex items-center gap-1">
@@ -98,13 +95,12 @@ export default function MapDisplay({ activeFlights, loading }: MapDisplayProps) 
               ) : null
             ))}
 
-            {/* رسم مسار الطائرة المحددة */}
             {selectedFlightId && polylinePositions.length > 0 && (
               <Polyline 
                 positions={polylinePositions} 
                 color="#3b82f6" 
                 weight={3} 
-                opacity={0.7} 
+                opacity={0.8} 
                 dashArray="5, 10"
               />
             )}

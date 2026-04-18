@@ -1,31 +1,28 @@
 """SQLAlchemy models for the Flight Intelligence database."""
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Index, BigInteger
-from sqlalchemy.orm import relationship
+import enum
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Index, BigInteger, Enum
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import relationship, deferred
 from sqlalchemy.sql import func
 from app.database import Base
-from datetime import datetime
-from typing import Optional
 
+# ==========================================
+# 1. Lookup Tables (البيانات المرجعية)
+# ==========================================
 
 class Country(Base):
-    """Country model for airline origin countries."""
+    """Country lookup table."""
     __tablename__ = "countries"
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), unique=True, nullable=False, index=True)
     iso_code = Column(String(3), unique=True, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
-    # Relationships
     airlines = relationship("Airline", back_populates="country")
-    
-    def __repr__(self):
-        return f"<Country(name='{self.name}')>"
-
 
 class Airline(Base):
-    """Airline model containing airline information."""
+    """Airline lookup table."""
     __tablename__ = "airlines"
     
     id = Column(Integer, primary_key=True, index=True)
@@ -34,95 +31,97 @@ class Airline(Base):
     callsign_prefix = Column(String(10), nullable=True)
     country_id = Column(Integer, ForeignKey("countries.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
-    # Relationships
     country = relationship("Country", back_populates="airlines")
     flights = relationship("Flight", back_populates="airline")
     
-    # Indexes for performance
-    __table_args__ = (
-        Index('idx_airline_icao24_name', 'icao24', 'name'),
-    )
-    
-    def __repr__(self):
-        return f"<Airline(icao24='{self.icao24}', name='{self.name}')>"
+    __table_args__ = (Index('idx_airline_icao24_name', 'icao24', 'name'),)
 
+# ==========================================
+# 2. Core Data Warehouse (مصدر الحقيقة)
+# ==========================================
 
 class Flight(Base):
-    """Flight model containing flight tracking information."""
+    """The Source of Truth for all flights."""
     __tablename__ = "flights"
     
     id = Column(Integer, primary_key=True, index=True)
-    
-    # Aircraft identification
     icao24 = Column(String(6), nullable=False, index=True)
     callsign = Column(String(20), nullable=True, index=True)
-    
-    # Airline relationship
     airline_id = Column(Integer, ForeignKey("airlines.id"), nullable=True, index=True)
-    
-    # Origin country
     origin_country = Column(String(100), nullable=True, index=True)
     
-    # Timestamps (Unix epoch in seconds)
-    first_seen = Column(BigInteger, nullable=True, index=True)
-    last_seen = Column(BigInteger, nullable=True, index=True)
+    # Timestamps in Unix Epoch (Seconds) for fast range queries
+    first_seen = Column(BigInteger, nullable=False, index=True)
+    last_seen = Column(BigInteger, nullable=False, index=True)
     
-    # Departure airport
     est_departure_airport = Column(String(4), nullable=True, index=True)
-    est_departure_airport_horiz_distance = Column(Integer, nullable=True)
-    est_departure_airport_vert_distance = Column(Integer, nullable=True)
-    
-    # Arrival airport
     est_arrival_airport = Column(String(4), nullable=True, index=True)
-    est_arrival_airport_horiz_distance = Column(Integer, nullable=True)
-    est_arrival_airport_vert_distance = Column(Integer, nullable=True)
     
-    # Departure time
-    est_departure_time = Column(BigInteger, nullable=True)
-    est_arrival_time = Column(BigInteger, nullable=True)
-    
-    # System tracking
+    # System Metadata
     ingestion_time = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Unique identifier to prevent duplicates
     unique_flight_id = Column(String(100), unique=True, nullable=False, index=True)
+    
+    # ⚠️ ARCHITECTURAL DECISION: Deferred JSONB
+    # Trajectory is heavy. We defer loading it unless explicitly requested by the API.
+    trajectory = deferred(Column(JSONB, nullable=True))
     
     # Relationships
     airline = relationship("Airline", back_populates="flights")
+    events = relationship("FlightEvent", back_populates="flight", cascade="all, delete-orphan")
     
-    # Indexes for performance
     __table_args__ = (
         Index('idx_flight_time_range', 'first_seen', 'last_seen'),
         Index('idx_flight_airports', 'est_departure_airport', 'est_arrival_airport'),
-        Index('idx_flight_ingestion', 'ingestion_time'),
-        Index('idx_flight_country', 'origin_country'),
     )
+
+# ==========================================
+# 3. Intelligence Layer (طبقة الاستخبارات)
+# ==========================================
+
+class FlightEvent(Base):
+    """Tracks specific events (takeoff, landing, anomaly, deviation)."""
+    __tablename__ = "flight_events"
     
-    def __repr__(self):
-        return f"<Flight(icao24='{self.icao24}', callsign='{self.callsign}')>"
+    id = Column(Integer, primary_key=True, index=True)
+    flight_id = Column(Integer, ForeignKey("flights.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type = Column(String(50), nullable=False, index=True) 
+    timestamp = Column(BigInteger, nullable=False, index=True)
     
-    @property
-    def duration_seconds(self) -> Optional[int]:
-        """Calculate flight duration in seconds."""
-        if self.first_seen and self.last_seen:
-            return self.last_seen - self.first_seen
-        return None
+    # Flexible payload for the event (e.g., {"lat": 25.0, "lon": 55.0, "severity": "high"})
+    data = Column(JSONB, nullable=True)
     
-    @property
-    def duration_minutes(self) -> Optional[float]:
-        """Calculate flight duration in minutes."""
-        duration = self.duration_seconds
-        if duration:
-            return duration / 60
-        return None
+    flight = relationship("Flight", back_populates="events")
+
+# ==========================================
+# 4. Operational & Audit Layer (طبقة التشغيل)
+# ==========================================
+
+class JobMode(str, enum.Enum):
+    HISTORICAL = "historical"
+    CONTINUOUS = "continuous"
+    REALTIME = "realtime"
+
+class JobStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+class IngestionJob(Base):
+    """Audit log for all ingestion engines."""
+    __tablename__ = "ingestion_jobs"
     
-    @property
-    def duration_hours(self) -> Optional[float]:
-        """Calculate flight duration in hours."""
-        duration = self.duration_minutes
-        if duration:
-            return duration / 60
-        return None
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(String(100), nullable=True, index=True) # Celery Task ID
+    mode = Column(Enum(JobMode, name="job_mode_enum", create_type=False), nullable=False)
+    status = Column(Enum(JobStatus, name="job_status_enum", create_type=False), default=JobStatus.PENDING, nullable=False)
+    
+    start_time = Column(DateTime(timezone=True), server_default=func.now())
+    end_time = Column(DateTime(timezone=True), nullable=True)
+    
+    # Engine parameters (e.g., {"bbox": [12.0, 25.0, 42.0, 60.0]})
+    params = Column(JSONB, nullable=False)
+    
+    records_fetched = Column(Integer, default=0)
+    error_message = Column(String, nullable=True)

@@ -35,8 +35,8 @@ class OpenSkyClient:
         url = f"{self.BASE_URL}/{endpoint}"
         
         try:
-            # 🚀 الإصلاح الجذري: زيادة الـ timeout إلى 60 ثانية لتجنب أخطاء الشبكة
-            with httpx.Client(timeout=60.0) as client:
+            # 🚀 تعديل استراتيجي: انتظار حتى 120 ثانية لرد OpenSky
+            with httpx.Client(timeout=120.0) as client:
                 response = client.get(url, params=params, auth=self._get_auth())
                 
                 if response.status_code == 200:

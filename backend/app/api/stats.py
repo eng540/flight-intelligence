@@ -1,6 +1,7 @@
 """Statistics API endpoints."""
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import text  # 🚀 تم إضافة هذا الاستيراد لإصلاح خطأ فحص الصحة
 from typing import Optional, List, Dict, Any
 import logging
 
@@ -22,7 +23,7 @@ async def get_statistics(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 # ==========================================
-# 🚀 NEW: Custom Analytics Endpoints
+# 🚀 Custom Analytics Endpoints
 # ==========================================
 
 @router.get("/top-countries", response_model=List[Dict[str, Any]])
@@ -34,7 +35,6 @@ async def get_top_countries_by_flights(
 ):
     """
     نقطة نهاية للتحليلات المخصصة: أكثر دول بها حركة طيران ضمن نطاق زمني محدد.
-    (كما طُلب في تقرير المواصفات الهندسية).
     """
     try:
         from sqlalchemy import func, desc
@@ -74,7 +74,8 @@ async def health_check(db: Session = Depends(get_db)):
     """Health check endpoint."""
     from datetime import datetime
     try:
-        db.execute("SELECT 1")
+        # 🚀 الإصلاح الجذري: تغليف الاستعلام بدالة text()
+        db.execute(text("SELECT 1"))
         db_status = "connected"
     except Exception as e:
         logger.error(f"Database health check failed: {e}")

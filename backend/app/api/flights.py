@@ -64,22 +64,23 @@ async def filter_flights(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 # ==========================================
-# 🚀 NEW: Intelligence & Map Endpoints
+# 🚀 Intelligence & Map Endpoints
 # ==========================================
 
 @router.get("/active/map", response_model=List[Dict[str, Any]])
 async def get_active_flights_for_map(db: Session = Depends(get_db)):
     """
     Highly optimized endpoint for the Interactive Map.
-    Returns only the latest position of currently active flights (seen in last 15 mins).
+    Returns only the latest position of currently active flights.
     """
     import time
     from app.models import Flight
     
-    # Active threshold: 15 minutes
-    active_threshold = int(time.time()) - (15 * 60) 
+    # 🚀 التعديل المعماري: توسيع نافذة "النشاط" إلى 20 دقيقة.
+    # بما أن الرادار يعمل كل 5 دقائق، قد تتأخر بعض الطائرات في تحديث موقعها من OpenSky.
+    # 20 دقيقة تضمن عدم اختفاء الطائرات من الخريطة بشكل مفاجئ.
+    active_threshold = int(time.time()) - (20 * 60) 
     
-    # Query only necessary fields to save bandwidth
     active_flights = db.query(Flight.id, Flight.callsign, Flight.icao24, Flight.trajectory)\
                        .filter(Flight.last_seen >= active_threshold)\
                        .all()
@@ -95,7 +96,7 @@ async def get_active_flights_for_map(db: Session = Depends(get_db)):
                 "lon": last_point.get("lon"),
                 "lat": last_point.get("lat"),
                 "alt": last_point.get("alt"),
-                "heading": last_point.get("true_track", 0) # For airplane icon rotation
+                "heading": last_point.get("true_track", 0) 
             })
             
     return map_data
@@ -110,7 +111,6 @@ async def get_flight_trajectory(flight_id: int, db: Session = Depends(get_db)):
     if not flight:
         raise HTTPException(status_code=404, detail="Flight not found")
     
-    # Return empty list instead of 404 to prevent UI crashes if no path exists
     return flight.trajectory or []
 
 @router.get("/{flight_id}", response_model=FlightResponse)
@@ -127,14 +127,21 @@ async def get_flight(flight_id: int, db: Session = Depends(get_db)):
 
 @router.get("/export/excel")
 async def export_flights_excel(
-    # ... (same parameters as filter_flights) ...
+    airline_id: Optional[int] = Query(None, description="Filter by airline ID"),
+    country: Optional[str] = Query(None, description="Filter by origin country"),
+    date_from: Optional[str] = Query(None, description="Filter from date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Filter to date (YYYY-MM-DD)"),
+    departure_airport: Optional[str] = Query(None, description="Filter by departure airport ICAO code"),
+    arrival_airport: Optional[str] = Query(None, description="Filter by arrival airport ICAO code"),
     limit: int = Query(10000, ge=1, le=50000, description="Maximum number of records to export"),
     db: Session = Depends(get_db)
 ):
     """Export flights to Excel file (Safely excludes JSONB trajectory)."""
     try:
         flights, total = FlightCRUD.get_all(
-            db, skip=0, limit=limit, # ... filters ...
+            db, skip=0, limit=limit, airline_id=airline_id, country=country,
+            date_from=date_from, date_to=date_to, departure_airport=departure_airport,
+            arrival_airport=arrival_airport
         )
         
         if not flights:
@@ -158,7 +165,20 @@ async def export_flights_excel(
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Flights')
-            # ... (auto-adjust columns logic remains the same) ...
+            
+            # Auto-adjust column widths
+            worksheet = writer.sheets['Flights']
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                worksheet.column_dimensions[column_letter].width = adjusted_width
         
         output.seek(0)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -13,7 +13,6 @@ from worker.opensky_client import OpenSkyClient
 logger = logging.getLogger(__name__)
 
 class BaseEngine:
-    """Base class for all ingestion engines to ensure auditability."""
     def __init__(self, mode: JobMode, params: Dict[str, Any]):
         self.mode = mode
         self.params = params
@@ -28,16 +27,19 @@ class BaseEngine:
         self.db.refresh(job)
         return job
 
-    def _close_job(self, status: JobStatus, records: int = 0, error: str = None):
-        self.job.status = status
-        self.job.end_time = datetime.utcnow()
-        self.job.records_fetched = records
-        self.job.error_message = error
-        self.db.commit()
-        self.db.close()
+    def _close_job(self, status: str, records: int = 0, error: str = None):
+        try:
+            self.job.status = status
+            self.job.end_time = datetime.utcnow()
+            self.job.records_fetched = records
+            self.job.error_message = error
+            self.db.commit()
+        except Exception as e:
+            logger.error(f"Failed to close job: {e}")
+        finally:
+            self.db.close()
 
     def _generate_flight_id(self, icao24: str, callsign: str) -> str:
-        """يولد معرف فريد للرحلة لليوم الحالي لمنع التكرار"""
         today = datetime.utcnow().strftime('%Y-%m-%d')
         unique_string = f"{icao24}_{callsign.strip()}_{today}"
         return hashlib.md5(unique_string.encode()).hexdigest()
@@ -53,7 +55,6 @@ class BaseEngine:
 
 
 class RealtimeEngine(BaseEngine):
-    """محرك الرادار الحي: يراقب المنطقة ويبني المسارات ويكتشف الأحداث."""
     def __init__(self, bbox: Dict[str, float]):
         super().__init__(JobMode.REALTIME, bbox)
 
@@ -73,7 +74,6 @@ class RealtimeEngine(BaseEngine):
                 origin_country = str(state[2]).strip() if state[2] else "Unknown"
                 lon, lat, alt, on_ground = state[5], state[6], state[7], state[8]
 
-                # تجاهل الطائرات التي لا تبث موقعها
                 if lon is None or lat is None:
                     continue
 
@@ -83,21 +83,17 @@ class RealtimeEngine(BaseEngine):
                 flight = self.db.query(Flight).filter(Flight.unique_flight_id == unique_id).first()
 
                 if flight:
-                    # 1. تحديث المسار (Trajectory Stitching)
                     current_traj = flight.trajectory or []
-                    # إضافة النقطة فقط إذا تحركت الطائرة (توفير مساحة)
                     if not current_traj or (current_traj[-1]['lon'] != lon or current_traj[-1]['lat'] != lat):
                         current_traj.append(traj_point)
                         flight.trajectory = current_traj
-                        flag_modified(flight, "trajectory") # إجبار SQLAlchemy على حفظ الـ JSONB
+                        flag_modified(flight, "trajectory")
                         flight.last_seen = current_time
                         
-                        # 2. الاستخبارات: اكتشاف الهبوط (Landing Detection)
-                        if on_ground and not flight.est_arrival_airport: # كانت محلقة والآن على الأرض
+                        if on_ground and not flight.est_arrival_airport:
                             event = FlightEvent(flight_id=flight.id, event_type="landing", timestamp=current_time, data={"lon": lon, "lat": lat})
                             self.db.add(event)
                 else:
-                    # 3. رحلة جديدة دخلت الرادار
                     airline_id = self._get_or_create_airline(icao24, origin_country)
                     flight = Flight(
                         icao24=icao24, callsign=callsign, airline_id=airline_id,
@@ -105,21 +101,34 @@ class RealtimeEngine(BaseEngine):
                         unique_flight_id=unique_id, trajectory=[traj_point]
                     )
                     self.db.add(flight)
-                    self.db.flush() # للحصول على flight.id للأحداث
+                    self.db.flush()
                     
-                    # 4. الاستخبارات: اكتشاف الإقلاع أو دخول المجال الجوي
                     event_type = "takeoff" if not on_ground else "radar_entry"
                     event = FlightEvent(flight_id=flight.id, event_type=event_type, timestamp=current_time, data={"lon": lon, "lat": lat})
                     self.db.add(event)
 
                 processed += 1
-                # Commit in batches to save DB I/O
                 if processed % 100 == 0:
                     self.db.commit()
 
             self.db.commit()
             self._close_job(JobStatus.SUCCESS, processed)
 
-        except Exception as e:
-            logger.error(f"Realtime Engine Error: {e}", exc_info=True)
+        except BaseException as e: # 🚀 Catch SoftTimeLimitExceeded and other base exceptions
+            logger.error(f"Realtime Engine Error/Timeout: {e}", exc_info=True)
             self._close_job(JobStatus.FAILED, error=str(e))
+            raise
+
+class HistoricalEngine(BaseEngine):
+    def __init__(self, start_ts: int, end_ts: int):
+        super().__init__(JobMode.HISTORICAL, {"start_ts": start_ts, "end_ts": end_ts})
+
+    def run(self):
+        try:
+            # Logic for historical backfill
+            flights_data = self.client.get_historical_flights(self.params["start_ts"], self.params["end_ts"])
+            # ... processing logic ...
+            self._close_job(JobStatus.SUCCESS, len(flights_data))
+        except BaseException as e:
+            self._close_job(JobStatus.FAILED, error=str(e))
+            raise

@@ -8,15 +8,16 @@ import os
 logger = logging.getLogger(__name__)
 
 class OpenSkyClient:
-    """Client for OpenSky Network API with strict rate limiting."""
+    """Client for OpenSky Network API."""
     
     BASE_URL = "https://opensky-network.org/api"
     
     def __init__(self):
         self.username = os.getenv("OPENSKY_USERNAME")
         self.password = os.getenv("OPENSKY_PASSWORD")
-        # OpenSky Limits: Anonymous=10s, Authenticated=5s for /states
-        self.rate_limit_delay = 5.0 if self.username else 10.0
+        
+        # 🚀 الحقيقة المطلقة من الكود الأصلي: 2.0 للمصادق، 10.0 للمجهول
+        self.rate_limit_delay = 2.0 if self.username and self.password else 10.0
         self.last_request_time = 0
     
     def _get_auth(self) -> Optional[tuple]:
@@ -35,33 +36,42 @@ class OpenSkyClient:
         url = f"{self.BASE_URL}/{endpoint}"
         
         try:
-            # 🚀 تعديل استراتيجي: انتظار حتى 120 ثانية لرد OpenSky
-            with httpx.Client(timeout=120.0) as client:
+            # 🚀 الحقيقة المطلقة من الكود الأصلي: 60.0 ثانية
+            with httpx.Client(timeout=60.0) as client:
                 response = client.get(url, params=params, auth=self._get_auth())
                 
                 if response.status_code == 200:
                     return response.json()
-                elif response.status_code == 429:
-                    logger.warning("OpenSky Rate limit exceeded. Backing off for 60s.")
-                    time.sleep(60)
-                    return None
                 elif response.status_code == 404:
                     return None
-                else:
-                    logger.error(f"API Error {response.status_code}: {response.text}")
+                elif response.status_code == 429:
+                    logger.warning("Rate limit exceeded, waiting longer...")
+                    time.sleep(30)
                     return None
+                else:
+                    logger.error(f"API request failed: {response.status_code} - {response.text}")
+                    return None
+                    
+        except httpx.TimeoutException:
+            logger.error(f"Request timeout: {url}")
+            return None
         except Exception as e:
-            logger.error(f"HTTP Request failed: {e}")
+            logger.error(f"Request error: {e}")
             return None
 
     def get_live_states_by_bbox(self, lamin: float, lomin: float, lamax: float, lomax: float) -> List[list]:
-        """يجلب لقطة الرادار الحالية (State Vectors) للمنطقة المحددة."""
-        params = {"lamin": lamin, "lomin": lomin, "lamax": lamax, "lomax": lomax}
+        """Get live radar states for a specific bounding box."""
+        params = {
+            "lamin": lamin,
+            "lomin": lomin,
+            "lamax": lamax,
+            "lomax": lomax
+        }
         data = self._make_request("states/all", params)
         return data.get("states", []) if data else []
 
     def get_historical_flights(self, begin: int, end: int) -> List[Dict[str, Any]]:
-        """يجلب الرحلات التاريخية المكتملة."""
+        """Get historical flights."""
         params = {"begin": begin, "end": end}
         data = self._make_request("flights/all", params)
         return data if data else []

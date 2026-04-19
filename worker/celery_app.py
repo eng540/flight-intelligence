@@ -18,15 +18,13 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     
-    # 🚀 الإصلاح الجذري: تحديد مسار ملف المجدول في مجلد مؤقت
-    # هذا يمنع تعليق Celery Beat عند إعادة تشغيل الحاوية
     beat_schedule_filename="/tmp/celerybeat-schedule",
     
     # Beat scheduler
     beat_schedule={
         "realtime-radar-sweep": {
             "task": "worker.tasks.run_realtime_radar_task",
-            # تشغيل الرادار كل 5 دقائق (300 ثانية)
+            # 🚀 الحقيقة المطلقة من الكود الأصلي: 300.0 ثانية (5 دقائق)
             "schedule": 300.0,  
         },
     },

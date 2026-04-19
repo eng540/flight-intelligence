@@ -3,13 +3,18 @@ set -e
 
 echo "Starting Container Initialization..."
 
+# 1. الحقيقة: ملف alembic.ini موجود في مجلد backend
+# يجب الدخول إليه لتشغيل الترحيلات بنجاح كما هو محدد في الـ Makefile الخاص بك
 echo "Running database migrations..."
-# 🚀 الإصلاح الجذري: إجبار بايثون على تشغيل alembic من البيئة الوهمية الصحيحة
-python -m alembic upgrade head
+cd backend
+alembic upgrade head
+cd ..
 
+# 2. الحقيقة: مسح ملفات المجدول التالفة لمنع تجمد Celery Beat
 echo "Cleaning up old celery beat schedule files..."
 rm -f /tmp/celerybeat-schedule celerybeat-schedule celerybeat-schedule.db celerybeat-schedule.bak celerybeat-schedule.dir
 
+# 3. الحقيقة: تشغيل الخدمات بناءً على إعدادات PYTHONPATH الحالية
 echo "Starting Celery worker..."
 celery -A worker.celery_app worker -l info -Q ingestion,maintenance,default &
 

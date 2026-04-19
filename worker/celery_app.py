@@ -20,15 +20,16 @@ celery_app.conf.update(
     
     # Beat scheduler
     beat_schedule={
-        "realtime-radar-sweep-every-minute": {
+        "realtime-radar-sweep": {
             "task": "worker.tasks.run_realtime_radar_task",
-            "schedule": 60.0,  # 60 seconds = Realtime Radar
+            # 🚀 تعديل استراتيجي: تشغيل الرادار كل 5 دقائق (300 ثانية) لضمان الاستقرار
+            "schedule": 300.0,  
         },
-        # تم إزالة مهمة الحذف (Cleanup) للحفاظ على البيانات التاريخية
     },
     
     task_routes={
         "worker.tasks.run_realtime_radar_task": {"queue": "ingestion"},
+        "worker.tasks.run_historical_backfill_task": {"queue": "ingestion"},
     },
 )
 

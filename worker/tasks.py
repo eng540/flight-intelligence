@@ -1,8 +1,10 @@
 """Celery tasks for flight data ingestion."""
 from celery import shared_task
 import logging
+import sys
 import os
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from worker.engines import RealtimeEngine
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,13 @@ def run_realtime_radar_task(self):
     }
     
     engine = RealtimeEngine(bbox=bbox)
+    
+    # 🚀 الإصلاح الجذري: حفظ الـ ID قبل تشغيل المحرك
+    # لأن engine.run() تقوم بإغلاق جلسة قاعدة البيانات (db.close())
+    # ومحاولة قراءة engine.job.id بعدها ستؤدي إلى DetachedInstanceError
+    job_id = engine.job.id
+    
     engine.run()
     
-    return {"status": "completed", "job_id": engine.job.id}
+    # استخدام المتغير المحفوظ بدلاً من قراءته من الكائن المغلق
+    return {"status": "completed", "job_id": job_id}

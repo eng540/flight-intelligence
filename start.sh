@@ -22,4 +22,4 @@ echo "Starting Celery beat..."
 celery -A worker.celery_app beat -l info &
 
 echo "Starting FastAPI backend..."
-exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 4
+exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1

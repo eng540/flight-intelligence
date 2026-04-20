@@ -13,20 +13,21 @@ logger = logging.getLogger(__name__)
 @shared_task(
     bind=True,
     max_retries=0, 
-    # 🚀 تصحيح التناقض: يجب أن يكون وقت Celery أكبر من وقت HTTP (60s)
-    soft_time_limit=120, # 120 ثانية كافية جداً لانتظار HTTP ومعالجة البيانات
-    time_limit=150,      # القتل الإجباري
+    # 🚀 Increased Celery time limits to accommodate the new 120s HTTP timeout
+    soft_time_limit=150, 
+    time_limit=180,      
     queue="ingestion"
 )
 def run_realtime_radar_task(self):
     """مهمة الرادار الحي."""
     logger.info("Starting Realtime Radar Sweep...")
     
+    # 🚀 Default Bounding Box set to the Arabian Gulf & Middle East region
     bbox = {
-        "lamin": float(os.getenv("BBOX_LAMIN", "12.0")),
-        "lomin": float(os.getenv("BBOX_LOMIN", "25.0")),
-        "lamax": float(os.getenv("BBOX_LAMAX", "42.0")),
-        "lomax": float(os.getenv("BBOX_LOMAX", "60.0"))
+        "lamin": float(os.getenv("BBOX_LAMIN", "12.0")),  # South Yemen/Oman
+        "lomin": float(os.getenv("BBOX_LOMIN", "34.0")),  # Red Sea/West Saudi Arabia
+        "lamax": float(os.getenv("BBOX_LAMAX", "32.0")),  # North Kuwait/Iraq
+        "lomax": float(os.getenv("BBOX_LOMAX", "60.0"))   # Oman/Iran borders
     }
     
     engine = RealtimeEngine(bbox=bbox)
@@ -44,7 +45,7 @@ def run_realtime_radar_task(self):
 @shared_task(
     bind=True,
     max_retries=1,
-    soft_time_limit=600, # 10 دقائق للمهام التاريخية
+    soft_time_limit=600, # 10 minutes for historical tasks
     time_limit=660,
     queue="ingestion"
 )

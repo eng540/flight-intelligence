@@ -7,9 +7,8 @@ import {
   Airline 
 } from '@/types';
 
-// API base URL
-const API_BASE_URL = ''; // مسار فارغ يعني أن الـ API موجود على نفس الدومين
-// Create axios instance
+const API_BASE_URL = ''; 
+
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
@@ -18,19 +17,15 @@ const apiClient: AxiosInstance = axios.create({
   },
 });
 
-// Request interceptor
 apiClient.interceptors.request.use(
   (config) => {
-    console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
     return config;
   },
   (error) => {
-    console.error('API Request Error:', error);
     return Promise.reject(error);
   }
 );
 
-// Response interceptor
 apiClient.interceptors.response.use(
   (response) => {
     return response;
@@ -41,7 +36,6 @@ apiClient.interceptors.response.use(
   }
 );
 
-// Flights API
 export const flightsApi = {
   getFlights: async (page: number = 1, pageSize: number = 50): Promise<FlightListResponse> => {
     const response = await apiClient.get('/flights', {
@@ -67,9 +61,18 @@ export const flightsApi = {
     });
     return response.data;
   },
+
+  getActiveMapFlights: async (): Promise<any[]> => {
+    const response = await apiClient.get('/flights/active/map');
+    return response.data;
+  },
+
+  getFlightTrajectory: async (id: number): Promise<any[]> => {
+    const response = await apiClient.get(`/flights/${id}/trajectory`);
+    return response.data;
+  },
 };
 
-// Airlines API
 export const airlinesApi = {
   getAirlines: async (skip: number = 0, limit: number = 100): Promise<Airline[]> => {
     const response = await apiClient.get('/airlines', {
@@ -84,7 +87,6 @@ export const airlinesApi = {
   },
 };
 
-// Statistics API
 export const statsApi = {
   getStatistics: async (): Promise<FlightStatistics> => {
     const response = await apiClient.get('/stats');
@@ -95,6 +97,11 @@ export const statsApi = {
     const response = await apiClient.get('/stats/airlines', {
       params: { limit },
     });
+    return response.data;
+  },
+
+  getTopCountries: async (params?: { begin?: number; end?: number; limit?: number }) => {
+    const response = await apiClient.get('/stats/top-countries', { params });
     return response.data;
   },
 

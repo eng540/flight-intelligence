@@ -1,8 +1,8 @@
 """Flight API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import logging
 import io
 import pandas as pd
@@ -10,11 +10,10 @@ from datetime import datetime
 
 from app.database import get_db
 from app.crud import FlightCRUD
-from app.schemas import FlightResponse, FlightListResponse, FlightFilterParams
+from app.schemas import FlightResponse, FlightListResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/flights", tags=["flights"])
-
 
 @router.get("", response_model=FlightListResponse)
 async def get_flights(
@@ -22,28 +21,18 @@ async def get_flights(
     page_size: int = Query(50, ge=1, le=500, description="Items per page"),
     db: Session = Depends(get_db)
 ):
-    """
-    Get all flights with pagination.
-    
-    Returns a paginated list of all flights in the database.
-    """
+    """Get all flights with pagination (Excludes trajectory for performance)."""
     try:
         skip = (page - 1) * page_size
         flights, total = FlightCRUD.get_all(db, skip=skip, limit=page_size)
-        
         pages = (total + page_size - 1) // page_size
         
         return FlightListResponse(
-            total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
-            data=flights
+            total=total, page=page, page_size=page_size, pages=pages, data=flights
         )
     except Exception as e:
         logger.error(f"Error fetching flights: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
 
 @router.get("/filter", response_model=FlightListResponse)
 async def filter_flights(
@@ -57,60 +46,84 @@ async def filter_flights(
     page_size: int = Query(50, ge=1, le=500, description="Items per page"),
     db: Session = Depends(get_db)
 ):
-    """
-    Filter flights by various criteria.
-    
-    Available filters:
-    - **airline_id**: Filter by airline ID
-    - **country**: Filter by origin country name
-    - **date_from**: Filter flights from this date (YYYY-MM-DD)
-    - **date_to**: Filter flights to this date (YYYY-MM-DD)
-    - **departure_airport**: Filter by departure airport ICAO code
-    - **arrival_airport**: Filter by arrival airport ICAO code
-    """
+    """Filter flights by various criteria (Excludes trajectory)."""
     try:
         skip = (page - 1) * page_size
         flights, total = FlightCRUD.get_all(
-            db,
-            skip=skip,
-            limit=page_size,
-            airline_id=airline_id,
-            country=country,
-            date_from=date_from,
-            date_to=date_to,
-            departure_airport=departure_airport,
+            db, skip=skip, limit=page_size, airline_id=airline_id, country=country,
+            date_from=date_from, date_to=date_to, departure_airport=departure_airport,
             arrival_airport=arrival_airport
         )
-        
         pages = (total + page_size - 1) // page_size
         
         return FlightListResponse(
-            total=total,
-            page=page,
-            page_size=page_size,
-            pages=pages,
-            data=flights
+            total=total, page=page, page_size=page_size, pages=pages, data=flights
         )
     except Exception as e:
         logger.error(f"Error filtering flights: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+# ==========================================
+# 🚀 Intelligence & Map Endpoints
+# ==========================================
+
+@router.get("/active/map", response_model=List[Dict[str, Any]])
+async def get_active_flights_for_map(db: Session = Depends(get_db)):
+    """
+    Highly optimized endpoint for the Interactive Map.
+    Returns only the latest position of currently active flights.
+    """
+    import time
+    from app.models import Flight
+    
+    # 🚀 التعديل المعماري: توسيع نافذة "النشاط" إلى 20 دقيقة.
+    # بما أن الرادار يعمل كل 5 دقائق، قد تتأخر بعض الطائرات في تحديث موقعها من OpenSky.
+    # 20 دقيقة تضمن عدم اختفاء الطائرات من الخريطة بشكل مفاجئ.
+    active_threshold = int(time.time()) - (20 * 60) 
+    
+    active_flights = db.query(Flight.id, Flight.callsign, Flight.icao24, Flight.trajectory)\
+                       .filter(Flight.last_seen >= active_threshold)\
+                       .all()
+                       
+    map_data = []
+    for f in active_flights:
+        if f.trajectory and len(f.trajectory) > 0:
+            last_point = f.trajectory[-1] # Get the most recent radar ping
+            map_data.append({
+                "id": f.id,
+                "icao24": f.icao24,
+                "callsign": f.callsign or f.icao24,
+                "lon": last_point.get("lon"),
+                "lat": last_point.get("lat"),
+                "alt": last_point.get("alt"),
+                "heading": last_point.get("true_track", 0) 
+            })
+            
+    return map_data
+
+@router.get("/{flight_id}/trajectory", response_model=List[Dict[str, Any]])
+async def get_flight_trajectory(flight_id: int, db: Session = Depends(get_db)):
+    """
+    Fetch the full trajectory (path) of a specific flight.
+    Called only when a user clicks on a flight in the map or table.
+    """
+    flight = FlightCRUD.get_by_id(db, flight_id)
+    if not flight:
+        raise HTTPException(status_code=404, detail="Flight not found")
+    
+    return flight.trajectory or []
 
 @router.get("/{flight_id}", response_model=FlightResponse)
-async def get_flight(
-    flight_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Get a specific flight by ID.
-    
-    Returns detailed information about a single flight.
-    """
+async def get_flight(flight_id: int, db: Session = Depends(get_db)):
+    """Get a specific flight by ID (Includes trajectory)."""
     flight = FlightCRUD.get_by_id(db, flight_id)
     if not flight:
         raise HTTPException(status_code=404, detail="Flight not found")
     return flight
 
+# ==========================================
+# Safe Excel Export
+# ==========================================
 
 @router.get("/export/excel")
 async def export_flights_excel(
@@ -123,30 +136,17 @@ async def export_flights_excel(
     limit: int = Query(10000, ge=1, le=50000, description="Maximum number of records to export"),
     db: Session = Depends(get_db)
 ):
-    """
-    Export flights to Excel file.
-    
-    Exports filtered flights to an Excel file for download.
-    Supports the same filters as the /filter endpoint.
-    """
+    """Export flights to Excel file (Safely excludes JSONB trajectory)."""
     try:
-        # Fetch flights with filters
         flights, total = FlightCRUD.get_all(
-            db,
-            skip=0,
-            limit=limit,
-            airline_id=airline_id,
-            country=country,
-            date_from=date_from,
-            date_to=date_to,
-            departure_airport=departure_airport,
+            db, skip=0, limit=limit, airline_id=airline_id, country=country,
+            date_from=date_from, date_to=date_to, departure_airport=departure_airport,
             arrival_airport=arrival_airport
         )
         
         if not flights:
             raise HTTPException(status_code=404, detail="No flights found for export")
         
-        # Prepare data for export
         data = []
         for flight in flights:
             data.append({
@@ -159,10 +159,8 @@ async def export_flights_excel(
                 "Last Seen": datetime.fromtimestamp(flight.last_seen).strftime("%Y-%m-%d %H:%M:%S") if flight.last_seen else "",
                 "Departure Airport": flight.est_departure_airport,
                 "Arrival Airport": flight.est_arrival_airport,
-                "Duration (hours)": round(flight.duration_hours, 2) if flight.duration_hours else "",
             })
         
-        # Create Excel file
         df = pd.DataFrame(data)
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -183,8 +181,6 @@ async def export_flights_excel(
                 worksheet.column_dimensions[column_letter].width = adjusted_width
         
         output.seek(0)
-        
-        # Generate filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"flights_export_{timestamp}.xlsx"
         
@@ -193,9 +189,6 @@ async def export_flights_excel(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
-        
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error exporting flights: {e}")
         raise HTTPException(status_code=500, detail="Error generating export file")

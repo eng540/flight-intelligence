@@ -16,7 +16,7 @@ class OpenSkyClient:
         self.username = os.getenv("OPENSKY_USERNAME")
         self.password = os.getenv("OPENSKY_PASSWORD")
         
-        # 🚀 الحقيقة المطلقة من الكود الأصلي: 2.0 للمصادق، 10.0 للمجهول
+        # 2.0 seconds for authenticated users, 10.0 for anonymous
         self.rate_limit_delay = 2.0 if self.username and self.password else 10.0
         self.last_request_time = 0
     
@@ -36,8 +36,8 @@ class OpenSkyClient:
         url = f"{self.BASE_URL}/{endpoint}"
         
         try:
-            # 🚀 الحقيقة المطلقة من الكود الأصلي: 60.0 ثانية
-            with httpx.Client(timeout=60.0) as client:
+            # 🚀 Increased timeout to 120.0 seconds to handle large areas/slow responses
+            with httpx.Client(timeout=120.0) as client:
                 response = client.get(url, params=params, auth=self._get_auth())
                 
                 if response.status_code == 200:
@@ -50,14 +50,16 @@ class OpenSkyClient:
                     return None
                 else:
                     logger.error(f"API request failed: {response.status_code} - {response.text}")
-                    return None
+                    # 🚀 Raise exception instead of returning None to prevent silent failures
+                    raise Exception(f"OpenSky API Error: {response.status_code} - {response.text}")
                     
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             logger.error(f"Request timeout: {url}")
-            return None
+            # 🚀 Propagate the timeout exception to mark the job as FAILED
+            raise Exception("OpenSky API Timeout: Area might be too large or server is slow.") from e
         except Exception as e:
             logger.error(f"Request error: {e}")
-            return None
+            raise e
 
     def get_live_states_by_bbox(self, lamin: float, lomin: float, lamax: float, lomax: float) -> List[list]:
         """Get live radar states for a specific bounding box."""
@@ -75,3 +77,13 @@ class OpenSkyClient:
         params = {"begin": begin, "end": end}
         data = self._make_request("flights/all", params)
         return data if data else []
+
+    def get_recent_flights(self, hours: int = 2) -> List[Dict[str, Any]]:
+        """Get flights from recent hours."""
+        end = int(time.time())
+        begin = end - (hours * 3600)
+        return self.get_historical_flights(begin, end)
+
+    def get_all_flights(self, begin: int, end: int) -> List[Dict[str, Any]]:
+        """Get all flights within a time range."""
+        return self.get_historical_flights(begin, end)
